@@ -68,6 +68,7 @@ def calculate_portfolio(df):
     if df.empty: return {}, 0, pd.DataFrame(), pd.DataFrame()
     
     positions = {} 
+    # 確保排序欄位存在
     df = df.sort_values(by="Timestamp")
     total_realized_pnl_hkd = 0
     running_pnl_hkd = 0
@@ -76,11 +77,15 @@ def calculate_portfolio(df):
     equity_curve = []
 
     for _, row in df.iterrows():
-        sym = row['Symbol']
-        action = row['Action']
-        qty = float(row['Quantity'])
-        price = float(row['Price'])
-        sl = float(row['Stop_Loss'])
+        sym = str(row['Symbol']) if pd.notnull(row['Symbol']) else ""
+        # 修正 TypeError: 確保 action 為字串且不為空
+        action = str(row['Action']) if pd.notnull(row['Action']) else ""
+        
+        if not sym or not action: continue # 跳過無效行
+
+        qty = float(row['Quantity']) if pd.notnull(row['Quantity']) else 0.0
+        price = float(row['Price']) if pd.notnull(row['Price']) else 0.0
+        sl = float(row['Stop_Loss']) if pd.notnull(row['Stop_Loss']) else 0.0
         date = row['Date']
         
         if sym not in positions:
@@ -272,7 +277,6 @@ with t3:
 
 with t4:
     st.subheader("📜 歷史紀錄")
-    # 這裡的 sort_values("Timestamp") 在修正 load_data 後就不會再報 KeyError
     if not df.empty:
         st.dataframe(df.sort_values("Timestamp", ascending=False), use_container_width=True, hide_index=True)
 
