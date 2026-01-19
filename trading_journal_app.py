@@ -3,17 +3,19 @@ import pandas as pd
 import os
 import requests
 import time
+import yfinance as yf
+import plotly.express as px
 from datetime import datetime
 
-# --- 1. 核心配置 ---
-FILE_NAME = "trade_ledger.csv"  # 改名以區分舊版格式
+# --- 1. 核心配置與初始化 ---
+FILE_NAME = "trade_ledger_v3.csv"
 UPLOAD_FOLDER = "images"
-
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-# 初始化流水帳 (Ledger)
-# 這裡紀錄每一筆「動作」，而不是每一筆「完整交易」
+st.set_page_config(page_title="Pro Trader Edge", layout="wide")
+
+# 初始化 CSV
 def init_csv():
     if not os.path.exists(FILE_NAME):
         df = pd.DataFrame(columns=[
@@ -33,235 +35,158 @@ def load_data():
 
 def save_transaction(data):
     df = load_data()
-    # 轉換新資料為 DataFrame 並合併
-    new_row = pd.DataFrame([data])
-    df = pd.concat([df, new_row], ignore_index=True)
+    df = pd.concat([df, pd.DataFrame([data])], ignore_index=True)
     df.to_csv(FILE_NAME, index=False)
 
-# --- 2. 核心邏輯：計算持倉與損益 ---
-# 這是一個會計引擎，它會重跑所有歷史紀錄來算出當前狀態
+# --- 2. 核心邏輯：計算持倉與損益曲線 ---
 def calculate_portfolio(df):
-    positions = {} # 格式: { 'AAPL': {'qty': 1000, 'avg_price': 150.0, 'realized_pnl': 5000} }
-    
-    # 確保數據按照時間排序
+    positions = {} 
     df = df.sort_values(by="Timestamp")
-    
     total_realized_pnl = 0
-    trade_history = [] # 用來存儲每一筆結算的賣出紀錄
+    trade_history = [] 
+    equity_curve = []
+    running_pnl = 0
 
-    for index, row in df.iterrows():
+    for _, row in df.iterrows():
         sym = row['Symbol']
         action = row['Action']
         qty = float(row['Quantity'])
         price = float(row['Price'])
-        fees = float(row['Fees']) if 'Fees' in row and pd.notna(row['Fees']) else 0
+        date = row['Date']
         
         if sym not in positions:
-            positions[sym] = {'qty': 0.0, 'avg_price': 0.0, 'realized_pnl': 0.0}
+            positions[sym] = {'qty': 0.0, 'avg_price': 0.0}
             
         curr = positions[sym]
         
-        # 簡單的做多邏輯 (Long Only Logic for simplicity)
-        # 如果需要做空，邏輯會更複雜，這裡假設主要為做多
-        if action == "買入 Buy":
-            # 計算新的平均成本 (加權平均)
+        if "買入 Buy" in action:
             total_cost = (curr['qty'] * curr['avg_price']) + (qty * price)
             new_qty = curr['qty'] + qty
             if new_qty != 0:
                 curr['avg_price'] = total_cost / new_qty
             curr['qty'] = new_qty
-            
-        elif action == "賣出 Sell":
-            # 計算已實現損益
-            # 損益 = (賣出價 - 平均成本) * 賣出股數 - 手續費
-            trade_pnl = ((price - curr['avg_price']) * qty) - fees
-            curr['realized_pnl'] += trade_pnl
+        elif "賣出 Sell" in action:
+            trade_pnl = (price - curr['avg_price']) * qty
             total_realized_pnl += trade_pnl
             curr['qty'] -= qty
-            
-            # 紀錄這筆賣出的績效
+            running_pnl += trade_pnl
+            equity_curve.append({"Date": date, "Cumulative PnL": running_pnl})
             trade_history.append({
-                "Date": row['Date'],
-                "Symbol": sym,
-                "Strategy": row['Strategy'],
-                "Sell_Price": price,
-                "Avg_Entry": curr['avg_price'],
-                "Qty": qty,
-                "PnL": trade_pnl,
-                "Notes": row['Notes']
+                "Date": date, "Symbol": sym, "Strategy": row['Strategy'],
+                "Sell_Price": price, "Entry_Cost": curr['avg_price'],
+                "Qty": qty, "PnL": trade_pnl, "Notes": row['Notes']
             })
 
-    # 過濾掉股數為 0 的持倉，只回傳現有持倉
     active_positions = {k: v for k, v in positions.items() if v['qty'] > 0}
-    
-    return active_positions, total_realized_pnl, pd.DataFrame(trade_history)
+    return active_positions, total_realized_pnl, pd.DataFrame(trade_history), pd.DataFrame(equity_curve)
 
-# --- 3. AI 分析功能 ---
-def fetch_ai_insight(pnl_text, open_pos_text):
-    api_key = "" # 部署時請在 Streamlit Cloud Secrets 設定，或直接填入(不建議公開)
-    if not api_key:
-        return "⚠️ 請先配置 Gemini API Key 才能使用 AI 分析。"
-
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key={api_key}"
-    
-    prompt = f"""
-    你是專業的交易績效分析師。請分析以下數據 (繁體中文回覆)：
-    
-    [已實現損益紀錄]
-    {pnl_text}
-    
-    [目前持倉風險]
-    {open_pos_text}
-    
-    請簡短給出：
-    1. 表現最好的策略與標的。
-    2. 針對目前持倉的風險提示 (例如某檔股票佔比過重)。
-    3. 下一步的操作建議。
-    """
-    
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+# --- 3. 即時報價功能 ---
+@st.cache_data(ttl=300)
+def get_live_prices(symbols):
+    if not symbols: return {}
     try:
-        res = requests.post(url, json=payload, timeout=10)
-        if res.status_code == 200:
-            return res.json()['candidates'][0]['content']['parts'][0]['text']
-    except:
-        pass
-    return "❌ AI 連線逾時，請稍後再試。"
+        data = yf.download(list(symbols), period="1d", progress=False)['Close']
+        prices = {}
+        for sym in symbols:
+            try:
+                # 處理多標的或單標的返回格式
+                val = data[sym].iloc[-1] if len(symbols) > 1 else data.iloc[-1]
+                prices[sym] = float(val)
+            except: prices[sym] = None
+        return prices
+    except: return {}
 
-# --- 4. App 介面 ---
-st.set_page_config(page_title="Pro Trader Journal", layout="centered")
+# --- 4. AI 分析 ---
+def fetch_ai_insight(pnl_summary, open_summary):
+    api_key = "" # 系統會自動注入
+    if not api_key: return "⚠️ 請於設定中配置 API Key。"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key={api_key}"
+    prompt = f"你是專業交易教練。請分析數據並給予繁體中文建議：\n已實現:{pnl_summary}\n持倉:{open_summary}\n請提供：1.表現評估 2.風險警告 3.下週建議。"
+    try:
+        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=10)
+        return res.json()['candidates'][0]['content']['parts'][0]['text']
+    except: return "AI 目前無法連線。"
 
-# 手機版優化 CSS
-st.markdown("""
-    <style>
-    .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; }
-    .metric-card { background-color: #f0f2f6; padding: 10px; border-radius: 8px; text-align: center; }
-    </style>
-""", unsafe_allow_html=True)
+# --- 5. UI 介面 ---
+st.markdown("<style>div[data-testid='metric-container'] { background-color: #f0f2f6; padding: 10px; border-radius: 10px; }</style>", unsafe_allow_html=True)
+st.title("🚀 Pro Trader Edge (專業版)")
 
-st.title("💰 智能分批交易日誌")
-
-# 讀取數據
 df = load_data()
-active_pos, total_pnl, history_df = calculate_portfolio(df)
+active_pos, realized_pnl, history_df, equity_df = calculate_portfolio(df)
 
-# --- 側邊欄：輸入區 ---
+# --- 側邊欄 ---
 with st.sidebar:
-    st.header("📝 新增交易動作")
+    st.header("⚡ 交易指令")
     with st.form("trade_form", clear_on_submit=True):
-        date_in = st.date_input("日期")
+        d_in = st.date_input("日期")
+        s_raw = st.text_input("代號 (如 700 或 TSLA)").upper().strip()
         
-        # 標的輸入 (自動大寫)
-        symbol_in = st.text_input("股票代號 (Symbol)", placeholder="e.g. TSLA").upper()
-        
-        # 動作選擇
-        action_in = st.radio("動作", ["買入 Buy", "賣出 Sell"], horizontal=True)
-        
-        # 股數與價格
-        col1, col2 = st.columns(2)
-        qty_in = col1.number_input("股數/口數", min_value=0.01, step=1.0)
-        price_in = col2.number_input("成交價格", min_value=0.0, step=0.1)
-        
-        # 策略標籤 (Custom Tag)
-        # 取得現有的策略列表
-        existing_strategies = df['Strategy'].unique().tolist() if not df.empty else []
-        default_opts = ["趨勢跟隨", "突破", "抄底", "當沖"]
-        all_opts = list(set(default_opts + existing_strategies))
-        
-        # 讓使用者選擇或輸入新標籤
-        strategy_select = st.selectbox("策略標籤", ["選取現有..."] + all_opts + ["➕ 新增自訂..."])
-        
-        final_strategy = ""
-        if strategy_select == "➕ 新增自訂..." or strategy_select == "選取現有...":
-            final_strategy = st.text_input("輸入新策略名稱")
+        # 港股自動補完邏輯
+        if s_raw.isdigit():
+            s_in = s_raw.zfill(4) + ".HK"
         else:
-            final_strategy = strategy_select
-
-        notes_in = st.text_area("筆記")
-        img_file = st.file_uploader("上傳截圖", type=['png', 'jpg'])
+            s_in = s_raw
+            
+        act_in = st.radio("動作", ["買入 Buy", "賣出 Sell"], horizontal=True)
+        col1, col2 = st.columns(2)
+        q_in = col1.number_input("股數", min_value=0.01, step=1.0)
+        p_in = col2.number_input("價格", min_value=0.0)
         
-        submitted = st.form_submit_button("確認送出")
+        tags = list(set(["趨勢", "突破", "反轉"] + (df['Strategy'].unique().tolist() if not df.empty else [])))
+        st_in = st.selectbox("策略標籤", tags + ["➕ 新增..."])
+        if st_in == "➕ 新增...":
+            st_in = st.text_input("輸入新標籤")
+            
+        note_in = st.text_area("交易心得")
+        img_in = st.file_uploader("上傳截圖", type=['jpg', 'png'])
         
-        if submitted:
-            if qty_in > 0 and price_in > 0 and symbol_in:
-                # 處理圖片
-                img_path = ""
-                if img_file:
-                    img_path = os.path.join(UPLOAD_FOLDER, f"{int(time.time())}.png")
-                    with open(img_path, "wb") as f:
-                        f.write(img_file.getbuffer())
-                
-                # 儲存
-                save_transaction({
-                    "Date": date_in,
-                    "Symbol": symbol_in,
-                    "Action": action_in,
-                    "Strategy": final_strategy if final_strategy else "未分類",
-                    "Price": price_in,
-                    "Quantity": qty_in,
-                    "Fees": 0, # 未來可擴充手續費欄位
-                    "Notes": notes_in,
-                    "Img": img_path,
-                    "Timestamp": int(time.time())
-                })
-                st.success("紀錄已更新！")
+        if st.form_submit_button("儲存紀錄"):
+            if s_in and q_in > 0 and p_in > 0:
+                i_path = ""
+                if img_in:
+                    i_path = os.path.join(UPLOAD_FOLDER, f"{int(time.time())}.png")
+                    with open(i_path, "wb") as f: f.write(img_in.getbuffer())
+                save_transaction({"Date": d_in, "Symbol": s_in, "Action": act_in, "Strategy": st_in, "Price": p_in, "Quantity": q_in, "Fees": 0, "Notes": note_in, "Img": i_path, "Timestamp": int(time.time())})
+                st.success(f"已紀錄 {s_in}")
                 st.rerun()
-            else:
-                st.error("請輸入完整的價格與股數")
 
-# --- 主畫面：儀表板 ---
+# --- 主畫面 ---
+t1, t2, t3 = st.tabs(["📈 帳戶績效", "🔥 即時持倉", "📜 歷史流水帳"])
 
-# 1. 帳戶摘要
-st.markdown("### 📊 帳戶概況")
-c1, c2, c3 = st.columns(3)
-c1.metric("已實現損益", f"${total_pnl:,.0f}")
-c2.metric("持倉檔數", len(active_pos))
-# 估算持倉市值
-total_market_value = sum([v['qty'] * v['avg_price'] for k, v in active_pos.items()])
-c3.metric("持倉總成本", f"${total_market_value:,.0f}")
+with t1:
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("已實現損益", f"${realized_pnl:,.0f}")
+    win_r = (len(history_df[history_df['PnL']>0])/len(history_df)*100) if not history_df.empty else 0
+    c2.metric("勝率", f"{win_r:.1f}%")
+    c3.metric("持倉檔數", len(active_pos))
+    
+    if not equity_df.empty:
+        fig = px.area(equity_df, x="Date", y="Cumulative PnL", title="資金成長曲線")
+        st.plotly_chart(fig, use_container_width=True)
+    
+    if st.button("🤖 執行 AI 診斷", use_container_width=True):
+        with st.spinner("AI 分析中..."):
+            rep = fetch_ai_insight(f"PnL:{realized_pnl}, WinRate:{win_r}%", str(list(active_pos.keys())))
+            st.info(rep)
 
-st.divider()
-
-# 2. 目前持倉 (Open Positions)
-st.subheader("🔥 目前持倉 (未平倉)")
-if active_pos:
-    pos_data = []
-    for sym, data in active_pos.items():
-        pos_data.append({
-            "代號": sym,
-            "持有股數": f"{data['qty']:,.0f}",
-            "平均成本": f"${data['avg_price']:.2f}",
-            "預估市值": f"${data['qty'] * data['avg_price']:.2f}"
-        })
-    st.dataframe(pd.DataFrame(pos_data), use_container_width=True, hide_index=True)
-else:
-    st.info("目前空手，無持倉部位。")
-
-# 3. AI 分析
-st.divider()
-if st.button("🤖 AI 投資組合診斷", use_container_width=True):
-    with st.spinner("AI 正在分析您的分批進出場邏輯..."):
-        # 準備資料給 AI
-        pnl_summary = history_df.groupby('Strategy')['PnL'].sum().to_string() if not history_df.empty else "無已實現損益"
-        pos_summary = str(active_pos)
+with t2:
+    if active_pos:
+        prices = get_live_prices(active_pos.keys())
+        p_data = []
+        un_total = 0
+        for s, d in active_pos.items():
+            now = prices.get(s)
+            un_pnl = (now - d['avg_price']) * d['qty'] if now else 0
+            un_total += un_pnl
+            p_data.append({"代號": s, "股數": d['qty'], "成本": f"${d['avg_price']:.2f}", "現價": f"${now:.2f}" if now else "載入中", "未實現損益": un_pnl, "報酬率": f"{(un_pnl/(d['qty']*d['avg_price'])*100):.2f}%" if d['avg_price']!=0 else "0%"})
         
-        insight = fetch_ai_insight(pnl_summary, pos_summary)
-        st.markdown(f"""
-        <div style="background-color:#e8f4f9; padding:15px; border-radius:10px; border-left: 5px solid #2b8cbe;">
-            {insight}
-        </div>
-        """, unsafe_allow_html=True)
+        st.metric("總未實現損益 (浮動)", f"${un_total:,.2f}", delta=f"{un_total:,.2f}")
+        st.dataframe(pd.DataFrame(p_data), use_container_width=True, hide_index=True)
+        if st.button("🔄 刷新金價/股價"): st.cache_data.clear(); st.rerun()
+    else: st.info("目前無持倉")
 
-# 4. 近期已實現交易 (History)
-st.subheader("📜 已平倉/部分獲利紀錄")
-if not history_df.empty:
-    # 格式化顯示
-    show_df = history_df[['Date', 'Symbol', 'Strategy', 'Qty', 'Sell_Price', 'PnL']].copy()
-    show_df['PnL'] = show_df['PnL'].apply(lambda x: f"${x:,.2f}")
-    st.dataframe(show_df.sort_values(by="Date", ascending=False), use_container_width=True, hide_index=True)
-else:
-    st.write("尚無賣出紀錄。")
-
-# 5. 完整流水帳 (Debug用)
-with st.expander("查看完整交易流水帳 (Raw Data)"):
-    st.dataframe(df.sort_values(by="Timestamp", ascending=False))
+with t3:
+    st.dataframe(df.sort_values("Timestamp", ascending=False), use_container_width=True)
+    if st.checkbox("顯示最近截圖"):
+        last_img = df[df['Img']!=""].tail(1)
+        if not last_img.empty: st.image(last_img['Img'].values[0])
