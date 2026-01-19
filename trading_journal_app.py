@@ -110,12 +110,25 @@ def plot_trade_execution(symbol, trade_date, entry_price):
 
 # --- 4. 即時報價與 AI ---
 @st.cache_data(ttl=300)
-def get_live_prices(symbols):
-    if not symbols: return {}
+def get_live_prices(symbols_list):
+    """
+    接收 list 類型的代號，確保 Streamlit 快取雜湊成功
+    """
+    if not symbols_list: return {}
     try:
-        data = yf.download(list(symbols), period="1d", progress=False)['Close']
-        return {s: float(data[s].iloc[-1]) if len(symbols)>1 else float(data.iloc[-1]) for s in symbols}
-    except: return {}
+        # 下載數據
+        data = yf.download(symbols_list, period="1d", progress=False)['Close']
+        prices = {}
+        for s in symbols_list:
+            try:
+                # 處理多標的與單標的返回格式差異
+                val = data[s].iloc[-1] if len(symbols_list) > 1 else data.iloc[-1]
+                prices[s] = float(val)
+            except:
+                prices[s] = None
+        return prices
+    except Exception as e:
+        return {}
 
 def fetch_ai_insight(pnl_summary, open_summary):
     api_key = "" 
@@ -140,7 +153,6 @@ with st.sidebar:
         act_in = st.radio("動作", ["買入 Buy", "賣出 Sell"], horizontal=True)
         
         col1, col2 = st.columns(2)
-        # 移除 value 參數，使輸入框保持空白/不預填數字
         q_in = col1.number_input("股數 (Qty)", min_value=0.0, step=1.0, value=None)
         p_in = col2.number_input("成交價格 (Price)", min_value=0.0, step=0.01, value=None)
         
@@ -150,7 +162,6 @@ with st.sidebar:
         emo_in = st.select_slider("心理狀態", options=["恐慌", "猶豫", "平靜", "自信", "衝動"], value="平靜")
         rr_in = st.number_input("預期盈虧比 (R:R)", value=2.0, min_value=0.1)
         
-        # 動態計算風險提示
         if p_in and sl_in and act_in == "買入 Buy":
             risk = p_in - sl_in
             if risk > 0:
@@ -166,7 +177,6 @@ with st.sidebar:
         note_in = st.text_area("決策筆記")
         
         if st.form_submit_button("儲存執行紀錄"):
-            # 嚴格檢查
             if not s_in:
                 st.error("請輸入標的代號")
             elif q_in is None or q_in <= 0:
@@ -216,7 +226,8 @@ with t1:
 
 with t2:
     if active_pos:
-        prices = get_live_prices(active_pos.keys())
+        # 修正點：將 .keys() 轉換為 list，解決 UnhashableParamError
+        prices = get_live_prices(list(active_pos.keys()))
         p_data = []
         for s, d in active_pos.items():
             now = prices.get(s)
@@ -225,7 +236,7 @@ with t2:
             p_data.append({
                 "代號": s, "股數": d['qty'], "成本": f"${d['avg_price']:.2f}", 
                 "停損價": f"${last_sl:.2f}", "現價": f"${now:.2f}" if now else "讀取中...", 
-                "未實現": f"${un_pnl:,.2f}", 
+                "未實現損益": f"${un_pnl:,.2f}", 
                 "報酬%": f"{(un_pnl/(d['qty']*d['avg_price'])*100):.1f}%" if now and d['avg_price']!=0 else "0%"
             })
         st.dataframe(pd.DataFrame(p_data), use_container_width=True, hide_index=True)
