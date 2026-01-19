@@ -129,7 +129,15 @@ with st.sidebar:
         s_raw = st.text_input("代號", placeholder="例如: 700 或 TSLA").upper().strip()
         s_in = s_raw.zfill(4) + ".HK" if s_raw.isdigit() else s_raw
         
-        act_in = st.radio("動作", ["買入 Buy", "賣出 Sell"], horizontal=True)
+        # 將 Radio Button 替換為 Toggle Switch
+        is_sell = st.toggle("切換動作：買入 🟢 / 賣出 🔴", value=False)
+        act_in = "賣出 Sell" if is_sell else "買入 Buy"
+        
+        # 顯示當前選定的動作提醒
+        if is_sell:
+            st.markdown("<small style='color: #EF553B;'>當前動作：<b>賣出 Sell</b></small>", unsafe_allow_html=True)
+        else:
+            st.markdown("<small style='color: #00CC96;'>當前動作：<b>買入 Buy</b></small>", unsafe_allow_html=True)
         
         col1, col2 = st.columns(2)
         q_in = col1.number_input("股數 (Qty)", min_value=0.0, step=1.0)
@@ -167,7 +175,7 @@ with st.sidebar:
                     "Notes": note_in, 
                     "Timestamp": int(time.time())
                 })
-                st.success(f"✅ 已儲存 {s_in}")
+                st.success(f"✅ 已儲存 {s_in} {act_in}")
                 time.sleep(0.5)
                 st.rerun()
 
@@ -205,7 +213,6 @@ with t1:
     win_r = (len(history_df[history_df['PnL']>0])/len(history_df)*100) if not history_df.empty else 0
     col2.metric("勝率", f"{win_r:.1f}%")
     col3.metric("平均 R:R", f"{df['Risk_Reward'].mean():.2f}" if not df.empty else "0")
-    # 將 MDD 定義為當前所有持倉的總停損風險金額
     col4.metric("總回撤風險 (SL Risk)", f"${aggregate_sl_risk:,.2f}", delta_color="inverse", help="當前持倉全部觸發停損時的預期資金回吐總額")
     
     if not equity_df.empty:
