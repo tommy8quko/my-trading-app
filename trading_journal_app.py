@@ -85,26 +85,17 @@ def calculate_portfolio(df):
     active_positions = {k: v for k, v in positions.items() if v['qty'] > 0}
     return active_positions, total_realized_pnl, pd.DataFrame(trade_history), pd.DataFrame(equity_curve)
 
-# --- 3. 繪製交易執行圖表 ---
-def plot_trade_execution(symbol, trade_date, entry_price):
+# --- 3. 獲取歷史高價（計算個別標的回撤） ---
+@st.cache_data(ttl=3600)
+def get_historical_high(symbol, start_date):
+    """
+    獲取標的自買入日以來的最高價
+    """
     try:
-        t_date = pd.to_datetime(trade_date)
-        start_dt = (t_date - timedelta(days=10)).strftime('%Y-%m-%d')
-        end_dt = (t_date + timedelta(days=10)).strftime('%Y-%m-%d')
-        data = yf.download(symbol, start=start_dt, end=end_dt, progress=False)
-        
-        if data.empty: return None
-
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=data.index, y=data['Close'], name='收盤價', line=dict(color='#636EFA', width=2)))
-        fig.add_trace(go.Scatter(
-            x=[t_date], y=[entry_price],
-            mode='markers+text', name='執行點',
-            text=['📍 EXEC'], textposition='top center',
-            marker=dict(color='orange', size=15, symbol='star')
-        ))
-        fig.update_layout(title=f"{symbol} 執行當下行情重播", template="plotly_white", height=400, margin=dict(l=20,r=20,t=40,b=20))
-        return fig
+        data = yf.download(symbol, start=start_date, progress=False)
+        if not data.empty:
+            return float(data['High'].max())
+        return None
     except:
         return None
 
@@ -165,8 +156,13 @@ with st.sidebar:
             else:
                 st.caption("⚠️ 停損價應低於成交價")
 
-        tags = list(set(["動量突破", "均線拉回", "新聞驅動"] + (df['Strategy'].unique().tolist() if not df.empty else [])))
-        st_in = st.selectbox("策略", tags + ["➕ 新增..."])
+        # 更新策略選單：1. Pullback 2. Breakout 3. Buyable Gapup 4. Custom tag
+        default_strategies = ["Pullback", "Breakout", "Buyable Gapup"]
+        # 獲取歷史已使用的自定義策略
+        existing_custom = [s for s in df['Strategy'].unique().tolist() if s not in default_strategies] if not df.empty else []
+        tags = default_strategies + existing_custom
+        
+        st_in = st.selectbox("策略 (Strategy)", tags + ["➕ 新增..."])
         if st_in == "➕ 新增...": st_in = st.text_input("輸入新策略名稱")
         
         note_in = st.text_area("決策筆記")
@@ -201,15 +197,12 @@ with st.sidebar:
 t1, t2, t3, t4 = st.tabs(["📈 績效矩陣", "🔥 持倉 & 報價", "🔄 交易重播", "🧠 心理 & 歷史"])
 
 with t1:
-    # --- 最大回撤計算 ---
+    # --- 帳戶級別最大回撤計算 ---
     max_dd = 0
     if not equity_df.empty:
         equity_df['Peak'] = equity_df['Cumulative PnL'].cummax()
         equity_df['Drawdown'] = equity_df['Cumulative PnL'] - equity_df['Peak']
-        # 以金額計算的最大回撤
-        max_dd_amt = equity_df['Drawdown'].min()
-        # 以百分比計算（相對於峰值，簡單化處理）
-        max_dd = max_dd_amt
+        max_dd = equity_df['Drawdown'].min()
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("已實現損益", f"${realized_pnl:,.2f}")
@@ -237,12 +230,28 @@ with t2:
         for s, d in active_pos.items():
             now = prices.get(s)
             un_pnl = (now - d['avg_price']) * d['qty'] if now else 0
+            
+            # 獲取歷史最高價來計算個股回撤 (Drawdown)
+            # 找到該標的第一次買入日期
+            first_buy_date = df[df['Symbol'] == s]['Date'].min()
+            hist_high = get_historical_high(s, first_buy_date)
+            
+            stock_dd_pct = "N/A"
+            if now and hist_high and hist_high > 0:
+                dd_val = ((now - hist_high) / hist_high) * 100
+                stock_dd_pct = f"{dd_val:.1f}%"
+
             last_sl = df[df['Symbol'] == s]['Stop_Loss'].iloc[-1] if s in df['Symbol'].values else 0
+            
             p_data.append({
-                "代號": s, "股數": d['qty'], "成本": f"${d['avg_price']:.2f}", 
-                "停損價": f"${last_sl:.2f}", "現價": f"${now:.2f}" if now else "讀取中...", 
+                "代號": s, 
+                "股數": d['qty'], 
+                "成本": f"${d['avg_price']:.2f}", 
+                "停損價": f"${last_sl:.2f}", 
+                "現價": f"${now:.2f}" if now else "讀取中...", 
                 "未實現損益": f"${un_pnl:,.2f}", 
-                "報酬%": f"{(un_pnl/(d['qty']*d['avg_price'])*100):.1f}%" if now and d['avg_price']!=0 else "0%"
+                "報酬%": f"{(un_pnl/(d['qty']*d['avg_price'])*100):.1f}%" if now and d['avg_price']!=0 else "0%",
+                "回撤 % (vs High)": stock_dd_pct
             })
         st.dataframe(pd.DataFrame(p_data), use_container_width=True, hide_index=True)
         if st.button("🔄 刷新即時報價"): st.cache_data.clear(); st.rerun()
@@ -253,16 +262,27 @@ with t3:
     if not df.empty:
         target = st.selectbox("選擇回顧交易", df.index, format_func=lambda x: f"{df.iloc[x]['Date']} | {df.iloc[x]['Symbol']} | {df.iloc[x]['Action']}")
         row = df.iloc[target]
-        fig_replay = plot_trade_execution(row['Symbol'], row['Date'], row['Price'])
-        if fig_replay:
-            c1, c2 = st.columns([3, 1])
-            c1.plotly_chart(fig_replay, use_container_width=True)
-            c2.write(f"**執行價格：** ${row['Price']}")
-            c2.write(f"**設定停損：** ${row['Stop_Loss']}")
-            c2.write(f"**心理狀態：** {row['Emotion']}")
-            c2.write("**當時筆記：**")
-            c2.caption(row['Notes'])
-        else: st.warning("無法載入該時間段行情。")
+        # 繪製執行點與近期行情
+        try:
+            t_date = pd.to_datetime(row['Date'])
+            start_dt = (t_date - timedelta(days=10)).strftime('%Y-%m-%d')
+            end_dt = (t_date + timedelta(days=10)).strftime('%Y-%m-%d')
+            data = yf.download(row['Symbol'], start=start_dt, end=end_dt, progress=False)
+            if not data.empty:
+                fig_replay = go.Figure()
+                fig_replay.add_trace(go.Scatter(x=data.index, y=data['Close'], name='收盤價'))
+                fig_replay.add_trace(go.Scatter(x=[t_date], y=[row['Price']], mode='markers+text', text=['📍 EXEC'], marker=dict(color='orange', size=15)))
+                fig_replay.update_layout(title=f"{row['Symbol']} 執行當下行情", template="plotly_white")
+                
+                c1, c2 = st.columns([3, 1])
+                c1.plotly_chart(fig_replay, use_container_width=True)
+                c2.write(f"**策略：** {row['Strategy']}")
+                c2.write(f"**設定停損：** ${row['Stop_Loss']}")
+                c2.write(f"**心理狀態：** {row['Emotion']}")
+                c2.write("**當時筆記：**")
+                c2.caption(row['Notes'])
+            else: st.warning("無法載入數據")
+        except: st.warning("重播載入出錯")
 
 with t4:
     c1, c2 = st.columns([1, 2])
