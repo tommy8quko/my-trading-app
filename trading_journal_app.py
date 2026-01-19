@@ -285,27 +285,39 @@ with t5:
             save_all_data(df); st.rerun()
 
     if not df.empty:
-        st.markdown("### 📝 編輯紀錄")
-        selected_idx = st.selectbox("選擇紀錄", df.index, format_func=lambda x: f"{df.loc[x, 'Symbol']} @ {df.loc[x, 'Date']}")
+        st.markdown("### 📝 編輯或刪除紀錄")
+        selected_idx = st.selectbox("選擇紀錄進行操作", df.index, format_func=lambda x: f"[{df.loc[x, 'Date']}] {df.loc[x, 'Symbol']} - {df.loc[x, 'Action']} ({df.loc[x, 'Quantity']} 股)")
         t_edit = df.loc[selected_idx]
         
-        # 編輯面板更新
+        # 編輯面板
         col_e1, col_e2, col_e3 = st.columns(3)
         n_p = col_e1.number_input("價格", value=float(t_edit['Price']))
         n_q = col_e2.number_input("股數", value=float(t_edit['Quantity']))
-        # 新增停損欄位編輯
         n_sl = col_e3.number_input("停損價格", value=float(t_edit['Stop_Loss']))
         
-        if st.button("💾 更新"):
+        edit_col1, edit_col2 = st.columns(2)
+        
+        if edit_col1.button("💾 更新此筆紀錄", use_container_width=True):
             df.loc[selected_idx, 'Price'] = n_p
             df.loc[selected_idx, 'Quantity'] = n_q
             df.loc[selected_idx, 'Stop_Loss'] = n_sl
             save_all_data(df)
-            st.success("紀錄已更新！")
+            st.success("紀錄已成功更新！")
+            time.sleep(0.5)
+            st.rerun()
+            
+        if edit_col2.button("🗑️ 刪除此筆紀錄", use_container_width=True, type="secondary"):
+            df = df.drop(selected_idx).reset_index(drop=True)
+            save_all_data(df)
+            st.warning("紀錄已刪除。")
             time.sleep(0.5)
             st.rerun()
             
         st.divider()
-        confirm = st.checkbox("確認刪除所有數據")
-        if st.button("🔥 清空數據", disabled=not confirm):
-            save_all_data(pd.DataFrame(columns=df.columns)); st.rerun()
+        st.markdown("### ⚠️ 危險區域")
+        confirm = st.checkbox("我確認要清空整個數據庫的所有紀錄")
+        if st.button("🔥 清空所有數據", disabled=not confirm, type="primary"):
+            save_all_data(pd.DataFrame(columns=df.columns))
+            st.error("所有數據已清除。")
+            time.sleep(0.5)
+            st.rerun()
