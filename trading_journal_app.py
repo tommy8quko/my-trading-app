@@ -216,7 +216,6 @@ t1, t2, t3, t4, t5 = st.tabs(["📈 績效矩陣", "🔥 持倉 & 報價", "🔄
 with t1:
     st.subheader("📊 績效概覽")
     
-    # 預先計算持倉總風險 (HKD)
     total_sl_risk_hkd = 0
     if active_pos:
         live_prices_for_risk = get_live_prices(list(active_pos.keys()))
@@ -240,7 +239,6 @@ with t1:
     if not completed_trades_df.empty:
         st.divider()
         st.subheader("🏆 交易排行榜 (原始幣種)")
-        # 格式化顯示
         display_trades = completed_trades_df.copy()
         display_trades['PnL_Display'] = display_trades.apply(lambda x: f"{get_currency_symbol(x['Symbol'])} {x['PnL_Raw']:,.2f}", axis=1)
         
@@ -255,7 +253,7 @@ with t1:
             st.dataframe(top_loss[['Exit_Date', 'Symbol', 'PnL_Display']], hide_index=True, use_container_width=True)
 
 with t2:
-    st.markdown("### 🟢 持倉概覽 (數據以原始幣種計)")
+    st.markdown("### 🟢 持倉概覽 (原始幣種計)")
     current_symbols = list(active_pos.keys())
     live_prices = get_live_prices(current_symbols)
     processed_p_data = []
@@ -264,31 +262,34 @@ with t2:
             now = live_prices.get(s)
             qty, avg_p, last_sl = d['qty'], d['avg_price'], d['last_sl']
             
-            # 損益計算 (原始幣種)
+            # 損益與風險計算 (原始幣種)
             un_pnl_raw = (now - avg_p) * qty if now else 0
-            # 停損風險 (原始幣種)
             sl_risk_raw = (now - last_sl) * qty if (now and last_sl > 0) else 0
-            
-            cur_sym = get_currency_symbol(s)
+            # 新增部位價值
+            pos_size_raw = now * qty if now else 0
 
             processed_p_data.append({
-                "Ticker": s, 
-                "Currency": "HKD" if ".HK" in s else "USD",
-                "Qty": qty, 
-                "Avg": avg_p, 
-                "Last": now if now else 0,
-                "SL": last_sl, 
-                "SL Risk (Raw)": sl_risk_raw,
-                "PnL (Raw)": un_pnl_raw, 
-                "Return%": (un_pnl_raw/(qty * avg_p)*100) if (now and avg_p!=0) else 0
+                "代號": s, 
+                "持股數": qty, 
+                "平均成本": avg_p, 
+                "現價": now if now else 0,
+                "停損價": last_sl, 
+                "部位價值": pos_size_raw,
+                "停損回撤": sl_risk_raw,
+                "未實現損益": un_pnl_raw, 
+                "報酬%": (un_pnl_raw/(qty * avg_p)*100) if (now and avg_p!=0) else 0
             })
         p_df = pd.DataFrame(processed_p_data)
         st.dataframe(
             p_df, 
             column_config={
-                "Return%": st.column_config.ProgressColumn("報酬%", format="%.1f%%", min_value=-20, max_value=20),
-                "SL Risk (Raw)": st.column_config.NumberColumn("停損回撤 (原始幣種)", format="%.2f"),
-                "PnL (Raw)": st.column_config.NumberColumn("未實現損益 (原始幣種)", format="%.2f")
+                "報酬%": st.column_config.ProgressColumn("報酬%", format="%.1f%%", min_value=-20, max_value=20),
+                "部位價值": st.column_config.NumberColumn("部位價值 (原始幣種)", format="%.2f"),
+                "停損回撤": st.column_config.NumberColumn("停損回撤 (原始幣種)", format="%.2f"),
+                "未實現損益": st.column_config.NumberColumn("未實現損益 (原始幣種)", format="%.2f"),
+                "平均成本": st.column_config.NumberColumn("平均成本", format="%.2f"),
+                "現價": st.column_config.NumberColumn("現價", format="%.2f"),
+                "停損價": st.column_config.NumberColumn("停損價", format="%.2f")
             }, 
             hide_index=True, 
             use_container_width=True
@@ -341,7 +342,7 @@ with t5:
         if st.button("💾 更新此筆紀錄", use_container_width=True):
             df.loc[selected_idx, 'Price'] = n_p
             df.loc[selected_idx, 'Quantity'] = n_q
-            df.loc[selected_idx, 'Stop_loss'] = n_sl # Fix typo from previous version
+            df.loc[selected_idx, 'Stop_Loss'] = n_sl
             save_all_data(df)
             st.rerun()
         if st.button("🗑️ 刪除此筆紀錄", use_container_width=True, type="secondary"):
