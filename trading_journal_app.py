@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 
 # --- 1. 核心配置與初始化 ---
 FILE_NAME = "trade_ledger_v_final.csv"
+USD_HKD_RATE = 7.8 # 固定匯率轉換
+
 if not os.path.exists("images"):
     os.makedirs("images")
 
@@ -46,16 +48,29 @@ def save_transaction(data):
     df = pd.concat([df, pd.DataFrame([data])], ignore_index=True)
     save_all_data(df)
 
-# --- 2. 核心邏輯：計算分批持倉與損益 ---
+# 貨幣轉換輔助函數
+def get_hkd_value(symbol, value):
+    # 如果不是香港股票 (.HK)，則視為美金轉換
+    if not symbol.endswith(".HK"):
+        return value * USD_HKD_RATE
+    return value
+
+# --- 2. 核心邏輯：計算分批持倉與損益 (更新勝率與貨幣邏輯) ---
 def calculate_portfolio(df):
     if df.empty: return {}, 0, pd.DataFrame(), pd.DataFrame()
     
     positions = {} 
     df = df.sort_values(by="Timestamp")
-    total_realized_pnl = 0
-    trade_history = [] 
+    
+    total_realized_pnl_hkd = 0
+    running_pnl_hkd = 0
+    
+    # 用於追蹤「完整交易周期」的變數
+    # 結構: { symbol: { current_pnl_hkd: 0, has_started: False } }
+    cycle_tracker = {}
+    completed_trades = [] # 儲存每個歸零週期的總結果
+    
     equity_curve = []
-    running_pnl = 0
 
     for _, row in df.iterrows():
         sym = row['Symbol']
@@ -67,6 +82,7 @@ def calculate_portfolio(df):
         
         if sym not in positions:
             positions[sym] = {'qty': 0.0, 'avg_price': 0.0, 'last_sl': 0.0}
+            cycle_tracker[sym] = {'pnl_hkd': 0.0}
             
         curr = positions[sym]
         
@@ -83,20 +99,33 @@ def calculate_portfolio(df):
         elif "賣出 Sell" in action:
             if curr['qty'] > 0:
                 sell_qty = min(qty, curr['qty'])
-                pnl = (price - curr['avg_price']) * sell_qty
-                total_realized_pnl += pnl
-                running_pnl += pnl
+                # 計算當前賣出的損益 (原始幣種)
+                pnl_raw = (price - curr['avg_price']) * sell_qty
+                # 轉換為港幣
+                pnl_hkd = get_hkd_value(sym, pnl_raw)
+                
+                total_realized_pnl_hkd += pnl_hkd
+                running_pnl_hkd += pnl_hkd
+                
+                # 累加到該週期的 PnL
+                cycle_tracker[sym]['pnl_hkd'] += pnl_hkd
+                
                 curr['qty'] -= sell_qty
                 
-                trade_history.append({
-                    "Date": date, "Symbol": sym, "Strategy": row['Strategy'],
-                    "Action": "賣出 Sell", "Price": price, "Cost": curr['avg_price'],
-                    "Qty": sell_qty, "PnL": pnl, "Emotion": row.get('Emotion', '平靜')
-                })
-                equity_curve.append({"Date": date, "Cumulative PnL": running_pnl})
+                # 如果持倉歸零，紀錄一個完整的 Trade
+                if curr['qty'] < 0.0001:
+                    completed_trades.append({
+                        "Date": date,
+                        "Symbol": sym,
+                        "TotalPnL_HKD": cycle_tracker[sym]['pnl_hkd']
+                    })
+                    # 重置該代號的週期追蹤
+                    cycle_tracker[sym]['pnl_hkd'] = 0.0
+                
+                equity_curve.append({"Date": date, "Cumulative PnL": running_pnl_hkd})
 
     active_positions = {k: v for k, v in positions.items() if v['qty'] > 0.0001}
-    return active_positions, total_realized_pnl, pd.DataFrame(trade_history), pd.DataFrame(equity_curve)
+    return active_positions, total_realized_pnl_hkd, pd.DataFrame(completed_trades), pd.DataFrame(equity_curve)
 
 # --- 3. 即時報價 ---
 @st.cache_data(ttl=300)
@@ -120,7 +149,7 @@ def get_live_prices(symbols_list):
 
 # --- 4. UI 介面 ---
 df = load_data()
-active_pos, realized_pnl, history_df, equity_df = calculate_portfolio(df)
+active_pos, realized_pnl_hkd, completed_trades_df, equity_df = calculate_portfolio(df)
 
 with st.sidebar:
     st.header("⚡ 執行面板")
@@ -130,11 +159,9 @@ with st.sidebar:
         s_raw = st.text_input("代號 (Ticker)", placeholder="例如: 700 或 TSLA").upper().strip()
         s_in = s_raw.zfill(4) + ".HK" if s_raw.isdigit() else s_raw
         
-        # 1. 移至代號下方
         is_sell = st.toggle("Buy 🟢 / Sell 🔴", value=False)
         act_in = "賣出 Sell" if is_sell else "買入 Buy"
         
-        # 動態顏色切換 CSS
         toggle_color = "#EF553B" if is_sell else "#00CC96"
         st.markdown(f"""
             <style>
@@ -145,11 +172,10 @@ with st.sidebar:
         """, unsafe_allow_html=True)
         
         col1, col2 = st.columns(2)
-        # 2. 清空預設值 (將原本的 0.0 改為 None)
         q_in = col1.number_input("股數 (Qty)", min_value=0.0, step=1.0, value=None)
         p_in = col2.number_input("成交價格 (Price)", min_value=0.0, step=0.01, value=None)
         
-        sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.01, value=None, help="賣出時若不輸入，將沿用上次紀錄")
+        sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.01, value=None)
         
         st.divider()
         emo_in = st.select_slider("心理狀態", options=["恐慌", "猶豫", "平靜", "自信", "衝動"], value="平靜")
@@ -192,7 +218,7 @@ current_symbols = list(active_pos.keys())
 live_prices = get_live_prices(current_symbols)
 
 # 計算各標的 SL Risk 並加總
-aggregate_sl_risk = 0
+aggregate_sl_risk_hkd = 0
 processed_p_data = []
 if active_pos:
     for s, d in active_pos.items():
@@ -200,33 +226,47 @@ if active_pos:
         qty = d['qty']
         avg_p = d['avg_price']
         last_sl = d['last_sl']
-        un_pnl = (now - avg_p) * qty if now else 0
-        sl_risk_amt = (now - last_sl) * qty if (now and last_sl > 0) else 0
-        aggregate_sl_risk += sl_risk_amt
+        
+        # 原始幣種計算
+        un_pnl_raw = (now - avg_p) * qty if now else 0
+        sl_risk_amt_raw = (now - last_sl) * qty if (now and last_sl > 0) else 0
+        
+        # 轉換為港幣進行加總
+        aggregate_sl_risk_hkd += get_hkd_value(s, sl_risk_amt_raw)
 
         processed_p_data.append({
             "代號": s, "股數": f"{qty:,.0f}", "成本": f"${avg_p:.2f}", 
             "停損價": f"${last_sl:.2f}" if last_sl > 0 else "未設定", 
             "現價": f"${now:.2f}" if now else "讀取中...", 
-            "未實現損益": f"${un_pnl:,.2f}", 
-            "報酬%": f"{(un_pnl/(qty * avg_p)*100):.1f}%" if (now and avg_p!=0) else "0%",
-            "停損回撤 (SL Risk)": f"${sl_risk_amt:,.2f}" if now else "N/A"
+            "未實現損益": f"${un_pnl_raw:,.2f}", 
+            "報酬%": f"{(un_pnl_raw/(qty * avg_p)*100):.1f}%" if (now and avg_p!=0) else "0%",
+            "停損回撤 (SL Risk)": f"${sl_risk_amt_raw:,.2f}" if now else "N/A"
         })
 
 with t1:
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("已實現損益", f"${realized_pnl:,.2f}")
-    win_r = (len(history_df[history_df['PnL']>0])/len(history_df)*100) if not history_df.empty else 0
-    col2.metric("勝率", f"{win_r:.1f}%")
+    col1.metric("已實現損益 (HKD)", f"${realized_pnl_hkd:,.2f}")
+    
+    # 計算勝率 (基於歸零週期的交易)
+    if not completed_trades_df.empty:
+        wins = len(completed_trades_df[completed_trades_df['TotalPnL_HKD'] > 0])
+        total_trades = len(completed_trades_df)
+        win_r = (wins / total_trades * 100)
+    else:
+        win_r = 0.0
+        total_trades = 0
+        
+    col2.metric("勝率 (歸零計次)", f"{win_r:.1f}%", help=f"總成交交易數: {total_trades}")
     col3.metric("平均 R:R", f"{df['Risk_Reward'].mean():.2f}" if not df.empty else "0")
-    col4.metric("總回撤風險 (SL Risk)", f"${aggregate_sl_risk:,.2f}", delta_color="inverse", help="當前持倉全部觸發停損時的預期資金回吐總額")
+    col4.metric("總回撤風險 (HKD)", f"${aggregate_sl_risk_hkd:,.2f}", delta_color="inverse", help="當前持倉全部觸發停損時的預期港幣資金回吐總額")
     
     if not equity_df.empty:
-        fig_equity = px.area(equity_df, x="Date", y="Cumulative PnL", title="帳戶權益成長曲線", color_discrete_sequence=['#00CC96'])
+        fig_equity = px.area(equity_df, x="Date", y="Cumulative PnL", title="帳戶權益成長曲線 (HKD)", color_discrete_sequence=['#00CC96'])
         st.plotly_chart(fig_equity, use_container_width=True)
 
 with t2:
     if active_pos:
+        st.write("註：下方表格顯示該代號之原始幣種數值")
         st.dataframe(pd.DataFrame(processed_p_data), use_container_width=True, hide_index=True)
         if st.button("🔄 刷新即時報價"): st.cache_data.clear(); st.rerun()
     else: st.info("目前無持倉部位")
