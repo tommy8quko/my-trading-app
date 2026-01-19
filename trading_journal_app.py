@@ -29,7 +29,6 @@ init_csv()
 def load_data():
     try:
         df = pd.read_csv(FILE_NAME)
-        # 確保日期格式正確
         if not df.empty:
             df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
         return df
@@ -71,7 +70,6 @@ def calculate_portfolio(df):
             curr['qty'] = new_qty
         elif "賣出 Sell" in action:
             if curr['qty'] > 0:
-                # 這裡處理部分平倉或全平
                 sell_qty = min(qty, curr['qty'])
                 trade_pnl = (price - curr['avg_price']) * sell_qty
                 total_realized_pnl += trade_pnl
@@ -120,7 +118,7 @@ def get_live_prices(symbols):
     except: return {}
 
 def fetch_ai_insight(pnl_summary, open_summary):
-    api_key = "" # 系統自動注入
+    api_key = "" 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key={api_key}"
     prompt = f"你是交易教練。分析數據並給予建議：\n損益摘要:{pnl_summary}\n持倉:{open_summary}\n請提供表現評估、心理建設、及動量優化建議。"
     try:
@@ -142,19 +140,18 @@ with st.sidebar:
         act_in = st.radio("動作", ["買入 Buy", "賣出 Sell"], horizontal=True)
         
         col1, col2 = st.columns(2)
-        # 設定預設值為 0.0，且不預填數字以方便手機輸入
-        q_in = col1.number_input("股數", min_value=0.0, step=1.0, value=0.0)
-        p_in = col2.number_input("成交價格", min_value=0.0, step=0.01, value=0.0)
+        # 移除 value 參數，使輸入框保持空白/不預填數字
+        q_in = col1.number_input("股數 (Qty)", min_value=0.0, step=1.0, value=None)
+        p_in = col2.number_input("成交價格 (Price)", min_value=0.0, step=0.01, value=None)
         
-        # 新增停損欄位
-        sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.01, value=0.0)
+        sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.01, value=None)
         
         st.divider()
         emo_in = st.select_slider("心理狀態", options=["恐慌", "猶豫", "平靜", "自信", "衝動"], value="平靜")
         rr_in = st.number_input("預期盈虧比 (R:R)", value=2.0, min_value=0.1)
         
         # 動態計算風險提示
-        if p_in > 0 and sl_in > 0 and act_in == "買入 Buy":
+        if p_in and sl_in and act_in == "買入 Buy":
             risk = p_in - sl_in
             if risk > 0:
                 target = p_in + (risk * rr_in)
@@ -166,16 +163,16 @@ with st.sidebar:
         st_in = st.selectbox("策略", tags + ["➕ 新增..."])
         if st_in == "➕ 新增...": st_in = st.text_input("輸入新策略名稱")
         
-        note_in = st.text_area("決策筆記 (市場條件紀錄)")
+        note_in = st.text_area("決策筆記")
         
         if st.form_submit_button("儲存執行紀錄"):
-            # 嚴格檢查：股數與價格必須大於 0
+            # 嚴格檢查
             if not s_in:
-                st.error("請輸入標代號")
-            elif q_in <= 0:
-                st.error("股數必須大於 0")
-            elif p_in <= 0:
-                st.error("價格必須大於 0")
+                st.error("請輸入標的代號")
+            elif q_in is None or q_in <= 0:
+                st.error("請輸入有效的股數")
+            elif p_in is None or p_in <= 0:
+                st.error("請輸入有效的成交價格")
             else:
                 save_transaction({
                     "Date": d_in.strftime('%Y-%m-%d'), 
@@ -184,7 +181,7 @@ with st.sidebar:
                     "Strategy": st_in, 
                     "Price": p_in, 
                     "Quantity": q_in, 
-                    "Stop_Loss": sl_in,
+                    "Stop_Loss": sl_in if sl_in is not None else 0,
                     "Fees": 0, 
                     "Emotion": emo_in, 
                     "Risk_Reward": rr_in, 
@@ -208,10 +205,8 @@ with t1:
     if not equity_df.empty:
         equity_df['Peak'] = equity_df['Cumulative PnL'].cummax()
         equity_df['Drawdown'] = equity_df['Cumulative PnL'] - equity_df['Peak']
-        
         fig_equity = px.area(equity_df, x="Date", y="Cumulative PnL", title="帳戶權益成長曲線 (Equity)", color_discrete_sequence=['#00CC96'])
         st.plotly_chart(fig_equity, use_container_width=True)
-        
         fig_dd = px.line(equity_df, x="Date", y="Drawdown", title="風險回撤圖 (Drawdown)", color_discrete_sequence=['#EF553B'])
         st.plotly_chart(fig_dd, use_container_width=True)
 
@@ -226,15 +221,10 @@ with t2:
         for s, d in active_pos.items():
             now = prices.get(s)
             un_pnl = (now - d['avg_price']) * d['qty'] if now else 0
-            # 找該標的最近一次輸入的停損價
             last_sl = df[df['Symbol'] == s]['Stop_Loss'].iloc[-1] if s in df['Symbol'].values else 0
-            
             p_data.append({
-                "代號": s, 
-                "股數": d['qty'], 
-                "成本": f"${d['avg_price']:.2f}", 
-                "停損價": f"${last_sl:.2f}",
-                "現價": f"${now:.2f}" if now else "讀取中...", 
+                "代號": s, "股數": d['qty'], "成本": f"${d['avg_price']:.2f}", 
+                "停損價": f"${last_sl:.2f}", "現價": f"${now:.2f}" if now else "讀取中...", 
                 "未實現": f"${un_pnl:,.2f}", 
                 "報酬%": f"{(un_pnl/(d['qty']*d['avg_price'])*100):.1f}%" if now and d['avg_price']!=0 else "0%"
             })
