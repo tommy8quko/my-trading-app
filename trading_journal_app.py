@@ -34,12 +34,10 @@ def load_data():
         if df.empty:
             return df
             
-        # 修正 KeyError: 'Timestamp' - 如果欄位不存在則補齊
         if 'Timestamp' not in df.columns:
-            # 根據 Date 轉換為時間戳，若 Date 也無效則用現在時間
             df['Timestamp'] = pd.to_datetime(df['Date'], errors='coerce').view('int64') // 10**9
-            df['Timestamp'] = df['Timestamp'].replace(-9223372036, int(time.time())) # 處理無效日期
-            save_all_data(df) # 立即修復檔案
+            df['Timestamp'] = df['Timestamp'].replace(-9223372036, int(time.time()))
+            save_all_data(df)
 
         df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
         df['Price'] = pd.to_numeric(df['Price'], errors='coerce')
@@ -68,7 +66,6 @@ def calculate_portfolio(df):
     if df.empty: return {}, 0, pd.DataFrame(), pd.DataFrame()
     
     positions = {} 
-    # 確保排序欄位存在
     df = df.sort_values(by="Timestamp")
     total_realized_pnl_hkd = 0
     running_pnl_hkd = 0
@@ -78,10 +75,9 @@ def calculate_portfolio(df):
 
     for _, row in df.iterrows():
         sym = str(row['Symbol']) if pd.notnull(row['Symbol']) else ""
-        # 修正 TypeError: 確保 action 為字串且不為空
         action = str(row['Action']) if pd.notnull(row['Action']) else ""
         
-        if not sym or not action: continue # 跳過無效行
+        if not sym or not action: continue
 
         qty = float(row['Quantity']) if pd.notnull(row['Quantity']) else 0.0
         price = float(row['Price']) if pd.notnull(row['Price']) else 0.0
@@ -90,7 +86,7 @@ def calculate_portfolio(df):
         
         if sym not in positions:
             positions[sym] = {'qty': 0.0, 'avg_price': 0.0, 'last_sl': 0.0}
-            cycle_tracker[sym] = {'pnl_hkd': 0.0}
+            cycle_tracker[sym] = {'pnl_hkd': 0.0, 'start_date': date}
             
         curr = positions[sym]
         if sl > 0: curr['last_sl'] = sl
@@ -114,10 +110,17 @@ def calculate_portfolio(df):
                 
                 if curr['qty'] < 0.0001:
                     completed_trades.append({
-                        "Date": date, "Symbol": sym, "TotalPnL_HKD": cycle_tracker[sym]['pnl_hkd']
+                        "Exit_Date": date,
+                        "Entry_Date": cycle_tracker[sym]['start_date'],
+                        "Symbol": sym, 
+                        "TotalPnL_HKD": cycle_tracker[sym]['pnl_hkd']
                     })
-                    cycle_tracker[sym]['pnl_hkd'] = 0.0
+                    cycle_tracker[sym] = {'pnl_hkd': 0.0, 'start_date': None} 
+                
                 equity_curve.append({"Date": date, "Cumulative PnL": running_pnl_hkd})
+        
+        if "買入 Buy" in action and cycle_tracker[sym]['start_date'] is None:
+            cycle_tracker[sym]['start_date'] = date
 
     active_positions = {k: v for k, v in positions.items() if v['qty'] > 0.0001}
     return active_positions, total_realized_pnl_hkd, pd.DataFrame(completed_trades), pd.DataFrame(equity_curve)
@@ -197,17 +200,31 @@ with t1:
             
     _, realized_pnl_hkd, completed_trades_df, equity_df = calculate_portfolio(filtered_df)
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("已實現損益 (HKD)", f"${realized_pnl_hkd:,.2f}")
-    win_r = (len(completed_trades_df[completed_trades_df['TotalPnL_HKD'] > 0]) / len(completed_trades_df) * 100) if not completed_trades_df.empty else 0
-    col2.metric("勝率", f"{win_r:.1f}%")
-    col3.metric("平均 R:R", f"{filtered_df['Risk_Reward'].mean():.2f}" if not filtered_df.empty else "0")
-    col4.metric("策略數", f"{len(filtered_df['Strategy'].unique()) if not filtered_df.empty else 0}")
+    trade_count = len(completed_trades_df)
+    col2.metric("總交易場數", f"{trade_count}")
+    win_r = (len(completed_trades_df[completed_trades_df['TotalPnL_HKD'] > 0]) / trade_count * 100) if trade_count > 0 else 0
+    col3.metric("勝率", f"{win_r:.1f}%")
+    col4.metric("平均 R:R", f"{filtered_df['Risk_Reward'].mean():.2f}" if not filtered_df.empty else "0")
+    col5.metric("策略數", f"{len(filtered_df['Strategy'].unique()) if not filtered_df.empty else 0}")
 
     if not equity_df.empty:
-        st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", height=300), use_container_width=True)
+        st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", title="累計損益曲線", height=300), use_container_width=True)
 
-# 獲取報價與計算即時風險
+    if not completed_trades_df.empty:
+        st.divider()
+        st.subheader("🏆 交易排行榜 (完整交易流程)")
+        rank_col1, rank_col2 = st.columns(2)
+        with rank_col1:
+            st.markdown("##### 🟢 Top 5 獲利交易")
+            top_profit = completed_trades_df.sort_values(by="TotalPnL_HKD", ascending=False).head(5)
+            st.dataframe(top_profit, column_config={"TotalPnL_HKD": st.column_config.NumberColumn("獲利 (HKD)", format="$%d")}, hide_index=True, use_container_width=True)
+        with rank_col2:
+            st.markdown("##### 🔴 Top 5 虧損交易")
+            top_loss = completed_trades_df.sort_values(by="TotalPnL_HKD", ascending=True).head(5)
+            st.dataframe(top_loss, column_config={"TotalPnL_HKD": st.column_config.NumberColumn("虧損 (HKD)", format="$%d")}, hide_index=True, use_container_width=True)
+
 current_symbols = list(active_pos.keys())
 live_prices = get_live_prices(current_symbols)
 aggregate_sl_risk_hkd = 0
@@ -220,15 +237,9 @@ if active_pos:
         un_pnl_raw = (now - avg_p) * qty if now else 0
         sl_risk_amt_raw = (now - last_sl) * qty if (now and last_sl > 0) else 0
         aggregate_sl_risk_hkd += get_hkd_value(s, sl_risk_amt_raw)
-        
         processed_p_data.append({
-            "Ticker": s,
-            "Qty": qty,
-            "Avg": avg_p,
-            "Last": now if now else 0,
-            "SL": last_sl,
-            "PnL": un_pnl_raw,
-            "Return%": (un_pnl_raw/(qty * avg_p)*100) if (now and avg_p!=0) else 0,
+            "Ticker": s, "Qty": qty, "Avg": avg_p, "Last": now if now else 0,
+            "SL": last_sl, "PnL": un_pnl_raw, "Return%": (un_pnl_raw/(qty * avg_p)*100) if (now and avg_p!=0) else 0,
             "SL_Risk": sl_risk_amt_raw if now else 0
         })
 
@@ -236,29 +247,7 @@ with t2:
     st.markdown("### 🟢 持倉概覽 (Compact View)")
     if processed_p_data:
         p_df = pd.DataFrame(processed_p_data)
-        st.dataframe(
-            p_df,
-            column_config={
-                "Ticker": st.column_config.TextColumn("代號", width="small"),
-                "Qty": st.column_config.NumberColumn("股數", format="%d", width="small"),
-                "Avg": st.column_config.NumberColumn("成本", format="$%.2f", width="small"),
-                "Last": st.column_config.NumberColumn("現價", format="$%.2f", width="small"),
-                "SL": st.column_config.NumberColumn("停損", format="$%.2f", width="small"),
-                "PnL": st.column_config.NumberColumn("損益", format="$%d", width="medium"),
-                "Return%": st.column_config.ProgressColumn(
-                    "報酬%",
-                    format="%.1f%%",
-                    min_value=-20,
-                    max_value=20,
-                ),
-                "SL_Risk": st.column_config.NumberColumn("SL風險", format="$%d", width="small"),
-            },
-            hide_index=True,
-            use_container_width=True,
-            height=min(len(p_df) * 35 + 40, 800)
-        )
-        col_risk1, col_risk2 = st.columns(2)
-        col_risk1.metric("總持倉回撤風險 (SL Risk HKD)", f"${aggregate_sl_risk_hkd:,.2f}", delta_color="inverse")
+        st.dataframe(p_df, column_config={"Return%": st.column_config.ProgressColumn("報酬%", format="%.1f%%", min_value=-20, max_value=20)}, hide_index=True, use_container_width=True)
         if st.button("🔄 刷新即時報價", use_container_width=True): st.cache_data.clear(); st.rerun()
     else:
         st.info("目前無持倉部位")
@@ -282,68 +271,39 @@ with t4:
 
 with t5:
     st.subheader("🛠️ 數據管理")
-    
-    # --- 批量上傳功能 (含範本下載) ---
     with st.expander("📤 批量上傳交易紀錄"):
-        st.write("請使用以下 CSV 範本填寫數據，確保欄位名稱正確：")
-        
-        # 建立範本數據
         template_cols = ["Date", "Symbol", "Action", "Strategy", "Price", "Quantity", "Stop_Loss", "Emotion", "Risk_Reward", "Notes"]
-        template_data = pd.DataFrame([
-            ["2024-01-01", "700.HK", "B", "Breakout", 300.5, 100, 280, "平靜", 2.0, "突破轉強買入"],
-            ["2024-01-05", "TSLA", "S", "Pullback", 220.0, 50, 0, "自信", 1.5, "止盈離場"]
-        ], columns=template_cols)
-        
-        # 轉成 CSV Buffer
+        template_data = pd.DataFrame([["2024-01-01", "700.HK", "B", "Breakout", 300.5, 100, 280, "平靜", 2.0, "突破買入"]], columns=template_cols)
         csv_buffer = io.StringIO()
         template_data.to_csv(csv_buffer, index=False)
-        st.download_button(
-            label="📥 下載 CSV 範本",
-            data=csv_buffer.getvalue(),
-            file_name="trade_template.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
-        
-        st.divider()
-        uploaded_file = st.file_uploader("選擇您的交易記錄文件 (CSV/Excel)", type=["xlsx", "csv"])
-        if uploaded_file and st.button("🚀 開始匯入數據"):
-            try:
-                if uploaded_file.name.endswith('.csv'):
-                    new_trades = pd.read_csv(uploaded_file)
-                else:
-                    new_trades = pd.read_excel(uploaded_file)
-                
-                # 自動識別 Action 欄位 (B/S 轉換)
-                def clean_action(a):
-                    val = str(a).upper().strip()
-                    if val in ["B", "BUY", "買", "買入"]: return "買入 Buy"
-                    if val in ["S", "SELL", "賣", "賣出"]: return "賣出 Sell"
-                    return a
-                
-                new_trades['Action'] = new_trades['Action'].apply(clean_action)
-                new_trades['Timestamp'] = int(time.time())
-                
-                # 數據清理與合併
-                df = pd.concat([df, new_trades], ignore_index=True)
-                save_all_data(df)
-                st.success(f"成功匯入 {len(new_trades)} 筆記錄！")
-                time.sleep(1)
-                st.rerun()
-            except Exception as e:
-                st.error(f"匯入失敗: {e}")
+        st.download_button("📥 下載 CSV 範本", csv_buffer.getvalue(), "template.csv", "text/csv")
+        uploaded_file = st.file_uploader("選擇檔案", type=["xlsx", "csv"])
+        if uploaded_file and st.button("🚀 開始匯入"):
+            new_trades = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+            new_trades['Timestamp'] = int(time.time())
+            df = pd.concat([df, new_trades], ignore_index=True)
+            save_all_data(df); st.rerun()
 
     if not df.empty:
         st.markdown("### 📝 編輯紀錄")
         selected_idx = st.selectbox("選擇紀錄", df.index, format_func=lambda x: f"{df.loc[x, 'Symbol']} @ {df.loc[x, 'Date']}")
         t_edit = df.loc[selected_idx]
-        col_e1, col_e2 = st.columns(2)
+        
+        # 編輯面板更新
+        col_e1, col_e2, col_e3 = st.columns(3)
         n_p = col_e1.number_input("價格", value=float(t_edit['Price']))
         n_q = col_e2.number_input("股數", value=float(t_edit['Quantity']))
+        # 新增停損欄位編輯
+        n_sl = col_e3.number_input("停損價格", value=float(t_edit['Stop_Loss']))
+        
         if st.button("💾 更新"):
             df.loc[selected_idx, 'Price'] = n_p
             df.loc[selected_idx, 'Quantity'] = n_q
-            save_all_data(df); st.rerun()
+            df.loc[selected_idx, 'Stop_Loss'] = n_sl
+            save_all_data(df)
+            st.success("紀錄已更新！")
+            time.sleep(0.5)
+            st.rerun()
             
         st.divider()
         confirm = st.checkbox("確認刪除所有數據")
