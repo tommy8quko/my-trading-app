@@ -57,11 +57,15 @@ def save_transaction(data):
     save_all_data(df)
 
 def get_hkd_value(symbol, value):
-    if not str(symbol).endswith(".HK"):
-        return value * USD_HKD_RATE
-    return value
+    """
+    確保只有非港股(如美股)才乘以匯率。
+    如果 symbol 包含 .HK，則視為港幣，不變。
+    """
+    if isinstance(symbol, str) and ".HK" in symbol.upper():
+        return value
+    return value * USD_HKD_RATE
 
-# --- 2. 核心邏輯 (修正後的損益計算) ---
+# --- 2. 核心邏輯 (修正匯率與損益) ---
 def calculate_portfolio(df):
     if df.empty: return {}, 0, pd.DataFrame(), pd.DataFrame()
     
@@ -70,8 +74,6 @@ def calculate_portfolio(df):
     total_realized_pnl_hkd = 0
     running_pnl_hkd = 0
     
-    # 用於追蹤「從0開始到歸零」的交易週期
-    # cycle_tracker 存儲該代號當前週期的現金流總和
     cycle_tracker = {}
     completed_trades = [] 
     equity_curve = []
@@ -86,60 +88,58 @@ def calculate_portfolio(df):
         sl = float(row['Stop_Loss']) if pd.notnull(row['Stop_Loss']) else 0.0
         date = row['Date']
         
-        # 初始化持倉狀態
         if sym not in positions:
             positions[sym] = {'qty': 0.0, 'avg_price': 0.0, 'last_sl': 0.0}
         
-        # 初始化週期追蹤 (採用現金流法：買入為負，賣出為正)
         if sym not in cycle_tracker:
             cycle_tracker[sym] = {'cash_flow_hkd': 0.0, 'start_date': date, 'is_active': False}
             
         curr = positions[sym]
         if sl > 0: curr['last_sl'] = sl
         
-        # 標記週期開始
         if not cycle_tracker[sym]['is_active'] and qty > 0:
             cycle_tracker[sym]['is_active'] = True
             cycle_tracker[sym]['start_date'] = date
             cycle_tracker[sym]['cash_flow_hkd'] = 0.0
 
         if "買入 Buy" in action:
-            # 買入：現金流出
+            # 現金流出 (港幣化)
             cost_hkd = get_hkd_value(sym, qty * price)
             cycle_tracker[sym]['cash_flow_hkd'] -= cost_hkd
             
-            # 更新平均成本 (僅供持倉顯示參考)
-            total_cost = (curr['qty'] * curr['avg_price']) + (qty * price)
+            # 更新平均成本 (僅供持倉顯示)
+            total_cost_base = (curr['qty'] * curr['avg_price']) + (qty * price)
             new_qty = curr['qty'] + qty
             if new_qty > 0:
-                curr['avg_price'] = total_cost / new_qty
+                curr['avg_price'] = total_cost_base / new_qty
             curr['qty'] = new_qty
         
         elif "賣出 Sell" in action:
             if curr['qty'] > 0:
                 sell_qty = min(qty, curr['qty'])
                 
-                # 賣出：現金流入
+                # 現金流入 (港幣化)
                 revenue_hkd = get_hkd_value(sym, sell_qty * price)
                 cycle_tracker[sym]['cash_flow_hkd'] += revenue_hkd
                 
-                # 計算本次動作對「總已實現損益」的貢獻 (按比例計算成本)
-                realized_pnl_this_time = get_hkd_value(sym, (price - curr['avg_price']) * sell_qty)
-                total_realized_pnl_hkd += realized_pnl_this_time
-                running_pnl_hkd += realized_pnl_this_time
+                # 重要修正：損益計算時，這裡的 price - avg_price 是原幣種，
+                # 只需對結果調用一次 get_hkd_value 即可。
+                realized_pnl_raw = (price - curr['avg_price']) * sell_qty
+                realized_pnl_hkd_item = get_hkd_value(sym, realized_pnl_raw)
+                
+                total_realized_pnl_hkd += realized_pnl_hkd_item
+                running_pnl_hkd += realized_pnl_hkd_item
                 
                 curr['qty'] -= sell_qty
                 
-                # 檢查是否歸零 (Trade 完成)
                 if curr['qty'] < 0.0001:
                     completed_trades.append({
                         "Exit_Date": date,
                         "Entry_Date": cycle_tracker[sym]['start_date'],
                         "Symbol": sym, 
-                        "TotalPnL_HKD": cycle_tracker[sym]['cash_flow_hkd'] # 最終週期現金流即為總損益
+                        "TotalPnL_HKD": cycle_tracker[sym]['cash_flow_hkd']
                     })
                     cycle_tracker[sym]['is_active'] = False
-                    cycle_tracker[sym]['cash_flow_hkd'] = 0.0
                 
                 equity_curve.append({"Date": date, "Cumulative PnL": running_pnl_hkd})
 
@@ -174,7 +174,7 @@ with st.sidebar:
     with st.form("trade_form", clear_on_submit=True):
         d_in = st.date_input("日期")
         s_raw = st.text_input("代號 (Ticker)", placeholder="例如: 700 或 TSLA").upper().strip()
-        s_in = s_raw.zfill(4) + ".HK" if s_raw.isdigit() else s_raw
+        s_in = s_raw.zfill(4) + ".HK" if (s_raw.isdigit() and len(s_raw) <= 5) else s_raw
         is_sell = st.toggle("Buy 🟢 / Sell 🔴", value=False)
         act_in = "賣出 Sell" if is_sell else "買入 Buy"
         toggle_color = "#EF553B" if is_sell else "#00CC96"
@@ -235,20 +235,19 @@ with t1:
 
     if not completed_trades_df.empty:
         st.divider()
-        st.subheader("🏆 交易排行榜 (完整交易流程)")
+        st.subheader("🏆 交易排行榜")
         rank_col1, rank_col2 = st.columns(2)
         with rank_col1:
-            st.markdown("##### 🟢 Top 5 獲利交易")
+            st.markdown("##### 🟢 Top 獲利")
             top_profit = completed_trades_df.sort_values(by="TotalPnL_HKD", ascending=False).head(5)
-            st.dataframe(top_profit, column_config={"TotalPnL_HKD": st.column_config.NumberColumn("獲利 (HKD)", format="$%d")}, hide_index=True, use_container_width=True)
+            st.dataframe(top_profit, column_config={"TotalPnL_HKD": st.column_config.NumberColumn("獲利 (HKD)", format="$%.2f")}, hide_index=True, use_container_width=True)
         with rank_col2:
-            st.markdown("##### 🔴 Top 5 虧損交易")
+            st.markdown("##### 🔴 Top 虧損")
             top_loss = completed_trades_df.sort_values(by="TotalPnL_HKD", ascending=True).head(5)
-            st.dataframe(top_loss, column_config={"TotalPnL_HKD": st.column_config.NumberColumn("虧損 (HKD)", format="$%d")}, hide_index=True, use_container_width=True)
+            st.dataframe(top_loss, column_config={"TotalPnL_HKD": st.column_config.NumberColumn("虧損 (HKD)", format="$%.2f")}, hide_index=True, use_container_width=True)
 
 current_symbols = list(active_pos.keys())
 live_prices = get_live_prices(current_symbols)
-aggregate_sl_risk_hkd = 0
 processed_p_data = []
 
 if active_pos:
@@ -256,16 +255,13 @@ if active_pos:
         now = live_prices.get(s)
         qty, avg_p, last_sl = d['qty'], d['avg_price'], d['last_sl']
         un_pnl_raw = (now - avg_p) * qty if now else 0
-        sl_risk_amt_raw = (now - last_sl) * qty if (now and last_sl > 0) else 0
-        aggregate_sl_risk_hkd += get_hkd_value(s, sl_risk_amt_raw)
         processed_p_data.append({
             "Ticker": s, "Qty": qty, "Avg": avg_p, "Last": now if now else 0,
-            "SL": last_sl, "PnL": un_pnl_raw, "Return%": (un_pnl_raw/(qty * avg_p)*100) if (now and avg_p!=0) else 0,
-            "SL_Risk": sl_risk_amt_raw if now else 0
+            "SL": last_sl, "PnL": un_pnl_raw, "Return%": (un_pnl_raw/(qty * avg_p)*100) if (now and avg_p!=0) else 0
         })
 
 with t2:
-    st.markdown("### 🟢 持倉概覽 (Compact View)")
+    st.markdown("### 🟢 持倉概覽")
     if processed_p_data:
         p_df = pd.DataFrame(processed_p_data)
         st.dataframe(p_df, column_config={"Return%": st.column_config.ProgressColumn("報酬%", format="%.1f%%", min_value=-20, max_value=20)}, hide_index=True, use_container_width=True)
