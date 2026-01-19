@@ -85,20 +85,6 @@ def calculate_portfolio(df):
     active_positions = {k: v for k, v in positions.items() if v['qty'] > 0}
     return active_positions, total_realized_pnl, pd.DataFrame(trade_history), pd.DataFrame(equity_curve)
 
-# --- 3. 獲取歷史高價（計算個別標的回撤） ---
-@st.cache_data(ttl=3600)
-def get_historical_high(symbol, start_date):
-    """
-    獲取標的自買入日以來的最高價
-    """
-    try:
-        data = yf.download(symbol, start=start_date, progress=False)
-        if not data.empty:
-            return float(data['High'].max())
-        return None
-    except:
-        return None
-
 # --- 4. 即時報價與 AI ---
 @st.cache_data(ttl=300)
 def get_live_prices(symbols_list):
@@ -156,9 +142,8 @@ with st.sidebar:
             else:
                 st.caption("⚠️ 停損價應低於成交價")
 
-        # 更新策略選單：1. Pullback 2. Breakout 3. Buyable Gapup 4. Custom tag
+        # 策略選單簡化
         default_strategies = ["Pullback", "Breakout", "Buyable Gapup"]
-        # 獲取歷史已使用的自定義策略
         existing_custom = [s for s in df['Strategy'].unique().tolist() if s not in default_strategies] if not df.empty else []
         tags = default_strategies + existing_custom
         
@@ -197,7 +182,6 @@ with st.sidebar:
 t1, t2, t3, t4 = st.tabs(["📈 績效矩陣", "🔥 持倉 & 報價", "🔄 交易重播", "🧠 心理 & 歷史"])
 
 with t1:
-    # --- 帳戶級別最大回撤計算 ---
     max_dd = 0
     if not equity_df.empty:
         equity_df['Peak'] = equity_df['Cumulative PnL'].cummax()
@@ -209,19 +193,15 @@ with t1:
     win_r = (len(history_df[history_df['PnL']>0])/len(history_df)*100) if not history_df.empty else 0
     col2.metric("勝率", f"{win_r:.1f}%")
     col3.metric("平均 R:R", f"{df['Risk_Reward'].mean():.2f}" if not df.empty else "0")
-    col4.metric("最大回撤 (MDD)", f"${max_dd:,.2f}", delta_color="inverse")
+    col4.metric("帳戶 MDD", f"${max_dd:,.2f}", delta_color="inverse")
     
     if not equity_df.empty:
-        fig_equity = px.area(equity_df, x="Date", y="Cumulative PnL", title="帳戶權益成長曲線 (Equity)", color_discrete_sequence=['#00CC96'])
+        fig_equity = px.area(equity_df, x="Date", y="Cumulative PnL", title="帳戶權益成長曲線", color_discrete_sequence=['#00CC96'])
         st.plotly_chart(fig_equity, use_container_width=True)
         
-        fig_dd = px.line(equity_df, x="Date", y="Drawdown", title="風險回撤圖 (Drawdown)", color_discrete_sequence=['#EF553B'])
-        fig_dd.add_hline(y=max_dd, line_dash="dash", line_color="red", annotation_text="Max Drawdown")
+        fig_dd = px.line(equity_df, x="Date", y="Drawdown", title="歷史回撤圖", color_discrete_sequence=['#EF553B'])
+        fig_dd.add_hline(y=max_dd, line_dash="dash", line_color="red")
         st.plotly_chart(fig_dd, use_container_width=True)
-
-    if st.button("🤖 獲取 AI 專業分析", use_container_width=True):
-        with st.spinner("分析中..."):
-            st.info(fetch_ai_insight(f"PnL:{realized_pnl}, 勝率:{win_r}%, MDD:${max_dd}", str(list(active_pos.keys()))))
 
 with t2:
     if active_pos:
@@ -229,31 +209,28 @@ with t2:
         p_data = []
         for s, d in active_pos.items():
             now = prices.get(s)
-            un_pnl = (now - d['avg_price']) * d['qty'] if now else 0
+            qty = d['qty']
+            avg_p = d['avg_price']
+            un_pnl = (now - avg_p) * qty if now else 0
             
-            # 獲取歷史最高價來計算個股回撤 (Drawdown)
-            # 找到該標的第一次買入日期
-            first_buy_date = df[df['Symbol'] == s]['Date'].min()
-            hist_high = get_historical_high(s, first_buy_date)
-            
-            stock_dd_pct = "N/A"
-            if now and hist_high and hist_high > 0:
-                dd_val = ((now - hist_high) / hist_high) * 100
-                stock_dd_pct = f"{dd_val:.1f}%"
-
+            # 獲取該標的最後設定的停損價
             last_sl = df[df['Symbol'] == s]['Stop_Loss'].iloc[-1] if s in df['Symbol'].values else 0
             
+            # 計算停損回撤金額 (SL Drawdown/Risk): (現價 - 停損價) * 股數
+            sl_risk_amt = (now - last_sl) * qty if now and last_sl > 0 else 0
+
             p_data.append({
                 "代號": s, 
-                "股數": d['qty'], 
-                "成本": f"${d['avg_price']:.2f}", 
+                "股數": qty, 
+                "成本": f"${avg_p:.2f}", 
                 "停損價": f"${last_sl:.2f}", 
                 "現價": f"${now:.2f}" if now else "讀取中...", 
                 "未實現損益": f"${un_pnl:,.2f}", 
-                "報酬%": f"{(un_pnl/(d['qty']*d['avg_price'])*100):.1f}%" if now and d['avg_price']!=0 else "0%",
-                "回撤 % (vs High)": stock_dd_pct
+                "報酬%": f"{(un_pnl/(qty * avg_p)*100):.1f}%" if now and avg_p!=0 else "0%",
+                "停損回撤 (SL Risk)": f"${sl_risk_amt:,.2f}" if now else "N/A"
             })
         st.dataframe(pd.DataFrame(p_data), use_container_width=True, hide_index=True)
+        st.caption("💡 停損回撤 (SL Risk) = (現價 - 停損價) × 股數。代表若現在觸發停損，將從目前價值縮水的金額。")
         if st.button("🔄 刷新即時報價"): st.cache_data.clear(); st.rerun()
     else: st.info("目前無持倉部位")
 
@@ -262,7 +239,6 @@ with t3:
     if not df.empty:
         target = st.selectbox("選擇回顧交易", df.index, format_func=lambda x: f"{df.iloc[x]['Date']} | {df.iloc[x]['Symbol']} | {df.iloc[x]['Action']}")
         row = df.iloc[target]
-        # 繪製執行點與近期行情
         try:
             t_date = pd.to_datetime(row['Date'])
             start_dt = (t_date - timedelta(days=10)).strftime('%Y-%m-%d')
@@ -277,10 +253,8 @@ with t3:
                 c1, c2 = st.columns([3, 1])
                 c1.plotly_chart(fig_replay, use_container_width=True)
                 c2.write(f"**策略：** {row['Strategy']}")
-                c2.write(f"**設定停損：** ${row['Stop_Loss']}")
-                c2.write(f"**心理狀態：** {row['Emotion']}")
-                c2.write("**當時筆記：**")
-                c2.caption(row['Notes'])
+                c2.write(f"**執行價：** ${row['Price']}")
+                c2.write(f"**停損價：** ${row['Stop_Loss']}")
             else: st.warning("無法載入數據")
         except: st.warning("重播載入出錯")
 
