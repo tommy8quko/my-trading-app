@@ -343,9 +343,11 @@ with t5:
         
         t_edit = df.loc[selected_idx]
         col_e1, col_e2, col_e3 = st.columns(3)
-        n_p = col_e1.number_input("編輯價格", value=float(t_edit['Price']), key="edit_price")
-        n_q = col_e2.number_input("編輯股數", value=float(t_edit['Quantity']), key="edit_qty")
-        n_sl = col_e3.number_input("編輯停損價格", value=float(t_edit['Stop_Loss']), key="edit_sl")
+        
+        # 使用動態 Key 確保選中新紀錄時輸入框內容會更新
+        n_p = col_e1.number_input("編輯價格", value=float(t_edit['Price']), key=f"edit_price_{selected_idx}")
+        n_q = col_e2.number_input("編輯股數", value=float(t_edit['Quantity']), key=f"edit_qty_{selected_idx}")
+        n_sl = col_e3.number_input("編輯停損價格", value=float(t_edit['Stop_Loss']), key=f"edit_sl_{selected_idx}")
         
         btn_col1, btn_col2 = st.columns(2)
         if btn_col1.button("💾 更新此筆紀錄", use_container_width=True):
@@ -367,13 +369,12 @@ with t5:
 
         st.divider()
         
-        # 3. 數據重設區 (取代 Terrifying Button)
+        # 3. 數據重設區
         st.markdown("### ⚙️ 數據重設")
         confirm_reset = st.checkbox("我確定要清空所有交易歷史紀錄 (此操作不可撤銷)")
         
         if confirm_reset:
             if st.button("執行清空所有數據", use_container_width=True):
-                # 建立空的 DataFrame
                 empty_df = pd.DataFrame(columns=[
                     "Date", "Symbol", "Action", "Strategy", "Price", "Quantity", 
                     "Stop_Loss", "Fees", "Emotion", "Risk_Reward", "Notes", "Img", "Timestamp"
