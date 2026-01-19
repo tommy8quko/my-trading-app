@@ -125,30 +125,31 @@ active_pos, realized_pnl, history_df, equity_df = calculate_portfolio(df)
 with st.sidebar:
     st.header("⚡ 執行面板")
     
-    # 注入 CSS 以根據 Toggle 狀態更改顏色
-    is_sell = st.toggle("Buy 🟢 / Sell 🔴", value=False)
-    
-    toggle_color = "#EF553B" if is_sell else "#00CC96"
-    st.markdown(f"""
-        <style>
-        div[data-testid="stCheckboxToggle"] div[data-baseweb="checkbox"] div {{
-            background-color: {toggle_color} !important;
-        }}
-        </style>
-    """, unsafe_allow_html=True)
-    
-    act_in = "賣出 Sell" if is_sell else "買入 Buy"
-    
     with st.form("trade_form", clear_on_submit=True):
         d_in = st.date_input("日期")
-        s_raw = st.text_input("代號", placeholder="例如: 700 或 TSLA").upper().strip()
+        s_raw = st.text_input("代號 (Ticker)", placeholder="例如: 700 或 TSLA").upper().strip()
         s_in = s_raw.zfill(4) + ".HK" if s_raw.isdigit() else s_raw
         
-        col1, col2 = st.columns(2)
-        q_in = col1.number_input("股數 (Qty)", min_value=0.0, step=1.0)
-        p_in = col2.number_input("成交價格 (Price)", min_value=0.0, step=0.01)
+        # 1. 移至代號下方
+        is_sell = st.toggle("Buy 🟢 / Sell 🔴", value=False)
+        act_in = "賣出 Sell" if is_sell else "買入 Buy"
         
-        sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.01, help="賣出時若不輸入，將沿用上次紀錄")
+        # 動態顏色切換 CSS
+        toggle_color = "#EF553B" if is_sell else "#00CC96"
+        st.markdown(f"""
+            <style>
+            div[data-testid="stCheckboxToggle"] div[data-baseweb="checkbox"] div {{
+                background-color: {toggle_color} !important;
+            }}
+            </style>
+        """, unsafe_allow_html=True)
+        
+        col1, col2 = st.columns(2)
+        # 2. 清空預設值 (使用 value=0.0 但不 pre-input 具體值)
+        q_in = col1.number_input("股數 (Qty)", min_value=0.0, step=1.0, value=0.0)
+        p_in = col2.number_input("成交價格 (Price)", min_value=0.0, step=0.01, value=0.0)
+        
+        sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.01, value=0.0, help="賣出時若不輸入，將沿用上次紀錄")
         
         st.divider()
         emo_in = st.select_slider("心理狀態", options=["恐慌", "猶豫", "平靜", "自信", "衝動"], value="平靜")
