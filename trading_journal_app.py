@@ -283,7 +283,7 @@ with t2:
             })
         p_df = pd.DataFrame(processed_p_data)
         
-        # 定義欄位配置，根據 ROI 正負值來改變顏色
+        # 定義欄位配置，啟用千分位格式 (format="%,.2f")
         st.dataframe(
             p_df, 
             column_config={
@@ -292,25 +292,19 @@ with t2:
                     format="%.1f%%", 
                     min_value=-20, 
                     max_value=20,
-                    # 使用顏色映射：正數為綠色 (#00CC96)，負數為紅色 (#EF553B)
-                    # 注意：Streamlit 的 ProgressColumn color 參數目前支援單一顏色字串，
-                    # 為了達成「獲利綠、虧損紅」，我們改用 color 映射邏輯或條件渲染。
                     color="green" if p_df["報酬%"].mean() >= 0 else "red" 
                 ),
-                "部位價值": st.column_config.NumberColumn("部位價值 (原始幣種)", format="%.2f"),
-                "停損回撤": st.column_config.NumberColumn("停損回撤 (原始幣種)", format="%.2f"),
-                "未實現損益": st.column_config.NumberColumn("未實現損益 (原始幣種)", format="%.2f"),
-                "平均成本": st.column_config.NumberColumn("平均成本", format="%.2f"),
-                "現價": st.column_config.NumberColumn("現價", format="%.2f"),
-                "停損價": st.column_config.NumberColumn("停損價", format="%.2f")
+                "持股數": st.column_config.NumberColumn("持股數", format="%,.0f"),
+                "部位價值": st.column_config.NumberColumn("部位價值 (原始幣種)", format="%,.2f"),
+                "停損回撤": st.column_config.NumberColumn("停損回撤 (原始幣種)", format="%,.2f"),
+                "未實現損益": st.column_config.NumberColumn("未實現損益 (原始幣種)", format="%,.2f"),
+                "平均成本": st.column_config.NumberColumn("平均成本", format="%,.2f"),
+                "現價": st.column_config.NumberColumn("現價", format="%,.2f"),
+                "停損價": st.column_config.NumberColumn("停損價", format="%,.2f")
             }, 
             hide_index=True, 
             use_container_width=True
         )
-        
-        # 額外補充：由於 st.dataframe 的 ProgressColumn 尚不支援「逐行動態變色」，
-        # 若需要極致視覺效果，我們可以在下方額外顯示一個帶背景色的 HTML 表格或使用 st.data_editor 的特定參數。
-        # 目前已優化為基本邏輯。
         
         if st.button("🔄 刷新即時報價", use_container_width=True): st.cache_data.clear(); st.rerun()
     else:
