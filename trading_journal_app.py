@@ -267,16 +267,17 @@ with t2:
             pos_size_raw = now * qty if now else 0
             roi = (un_pnl_raw/(qty * avg_p)*100) if (now and avg_p!=0) else 0
 
+            # 預先處理成格式化字串以確保顯示千分位和兩位小數
             processed_p_data.append({
                 "代號": s, 
-                "持股數": qty, 
-                "平均成本": avg_p, 
-                "現價": now if now else 0,
-                "停損價": last_sl, 
-                "部位價值": pos_size_raw,
-                "停損回撤": sl_risk_raw,
-                "未實現損益": un_pnl_raw, 
-                "報酬%": roi
+                "持股數": f"{qty:,.2f}", 
+                "平均成本": f"{avg_p:,.2f}", 
+                "現價": f"{now:,.2f}" if now else "0.00",
+                "停損價": f"{last_sl:,.2f}", 
+                "部位價值": f"{pos_size_raw:,.2f}",
+                "停損回撤": f"{sl_risk_raw:,.2f}",
+                "未實現損益": f"{un_pnl_raw:,.2f}", 
+                "報酬%": roi # 保持數值供 ProgressColumn 使用
             })
         p_df = pd.DataFrame(processed_p_data)
         
@@ -289,14 +290,8 @@ with t2:
                     min_value=-20, 
                     max_value=20,
                     color="green" if p_df["報酬%"].mean() >= 0 else "red" 
-                ),
-                "持股數": st.column_config.NumberColumn("持股數", format="%.2f"),
-                "部位價值": st.column_config.NumberColumn("部位價值 (原始幣種)", format="%.2f"),
-                "停損回撤": st.column_config.NumberColumn("停損回撤 (原始幣種)", format="%.2f"),
-                "未實現損益": st.column_config.NumberColumn("未實現損益 (原始幣種)", format="%.2f"),
-                "平均成本": st.column_config.NumberColumn("平均成本", format="%.2f"),
-                "現價": st.column_config.NumberColumn("現價", format="%.2f"),
-                "停損價": st.column_config.NumberColumn("停損價", format="%.2f")
+                )
+                # 其餘欄位已轉為字串，自動顯示千分位，不需要額外配置
             }, 
             hide_index=True, 
             use_container_width=True
