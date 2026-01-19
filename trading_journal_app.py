@@ -130,7 +130,7 @@ with st.sidebar:
         s_in = s_raw.zfill(4) + ".HK" if s_raw.isdigit() else s_raw
         
         # 將 Radio Button 替換為 Toggle Switch
-        is_sell = st.toggle("切換動作：買入 🟢 / 賣出 🔴", value=False)
+        is_sell = st.toggle("Buy 🟢 / Sell 🔴", value=False)
         act_in = "賣出 Sell" if is_sell else "買入 Buy"
         
         # 顯示當前選定的動作提醒
