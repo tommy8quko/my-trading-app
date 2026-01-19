@@ -54,13 +54,13 @@ def fetch_ai_insight(summary_text):
    return "❌ AI 目前忙碌中，請稍後再試。"
 # --- App 介面 ---
 st.set_page_config(page_title="Trading Journal", layout="centered") # 手機版建議 centered
-# 自定義 CSS 讓手機端更好看
+# 自定義 CSS 讓手機端更好看# 
 st.markdown("""
-<style>
-   .main { background-color: #f8f9fa; }
-   .stMetric { background-color: white; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-</style>
-""", unsafe_allow_stdio=True)
+    <style>
+    .main { background-color: #f8f9fa; }
+    .stMetric { background-color: white; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    </style>
+""", unsafe_allow_html=True) 
 st.title("📱 AI 交易隨身筆記")
 # --- 側邊欄紀錄 (iOS 側邊欄可收合) ---
 with st.sidebar:
@@ -124,4 +124,5 @@ if not df.empty:
        if not has_img.empty:
            st.image(has_img['Img'].values[0])
 else:
+
    st.write("目前還沒有交易紀錄，請點開左側選單開始記錄！")
