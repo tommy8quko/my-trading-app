@@ -107,22 +107,19 @@ def calculate_portfolio(df):
 def get_momentum_data(symbols_list):
     if not symbols_list: return {}, {}
     try:
-        # 下載數據，確保處理單個或多個股票代號
         data = yf.download(symbols_list + ["SPY"], period="3mo", progress=False)
         prices = {}
         rs_scores = {}
         
-        # 提取 SPY 收盤價並確保是 float
         spy_close = data['Close']['SPY']
         spy_perf = (float(spy_close.iloc[-1]) / float(spy_close.iloc[0])) - 1
         
         for sym in symbols_list:
-            if len(symbols_list) + 1 > 1: # yfinance 在多標配時回傳 MultiIndex DataFrame
+            if len(symbols_list) + 1 > 1:
                 s_series = data['Close'][sym]
             else:
                 s_series = data['Close']
             
-            # 強制轉換為單一數值
             current_price = float(s_series.iloc[-1])
             initial_price = float(s_series.iloc[0])
             
@@ -135,7 +132,7 @@ def get_momentum_data(symbols_list):
         return {}, {}
 
 # --- 3. UI 介面 ---
-st.title("🏹 Momentum Pro Alpha v3.6")
+st.title("🏹 Momentum Pro Alpha v3.8")
 st.markdown("""
 <style>
     .stMetric { background: #1E1E1E; color: white; padding: 15px; border-radius: 8px; border-left: 5px solid #00FFAA; }
@@ -152,39 +149,61 @@ with st.sidebar:
         col_d1, col_d2 = st.columns(2)
         d_in = col_d1.date_input("日期")
         grade = col_d2.selectbox("進場評級", ["A+", "A", "B", "C", "D"])
-        s_raw = st.text_input("代號").upper().strip()
-        s_in = s_raw.zfill(4) + ".HK" if s_raw.isdigit() else s_raw
+        
+        s_raw = st.text_input("代號 (例如: TSLA, 0700)").upper().strip()
+        if s_raw.isdigit():
+            s_in = s_raw.zfill(4) + ".HK"
+        else:
+            s_in = s_raw
+            
         act_in = st.radio("動作", ["買入 Buy", "賣出 Sell"], horizontal=True)
         c1, c2, c3 = st.columns(3)
-        q_in = c1.number_input("股數", min_value=0.0, step=1.0, format="%.0f")
-        p_in = c2.number_input("價格", min_value=0.0, step=0.01, format="%.2f")
-        sl_in = c3.number_input("止損", min_value=0.0, step=0.01, format="%.2f")
+        
+        # 安全性強化：value=None 且強制數字類型檢查
+        q_in = c1.number_input("股數", min_value=0.0, step=1.0, format="%.0f", value=None)
+        p_in = c2.number_input("價格", min_value=0.0, step=0.01, format="%.2f", value=None)
+        sl_in = c3.number_input("止損", min_value=0.0, step=0.01, format="%.2f", value=None)
+        
         st_in = st.selectbox("策略", ["Breakout", "Pullback", "VCP", "High Tight Flag"])
         note_in = st.text_area("筆記")
         
         if st.form_submit_button("儲存紀錄"):
-            if s_in and q_in > 0 and p_in > 0:
-                new_row = {
-                    "Date": d_in, "Symbol": s_in, "Action": act_in, "Strategy": st_in, 
-                    "Price": p_in, "Quantity": q_in, "Stop_Loss": sl_in, "Setup_Grade": grade,
-                    "Fees": 0, "Notes": note_in, "Timestamp": int(time.time())
-                }
-                df_raw = pd.concat([df_raw, pd.DataFrame([new_row])], ignore_index=True)
-                save_all_data(df_raw)
-                st.rerun()
+            # 嚴格安全性檢查：確保不是 None 且必須是正數
+            if not s_in:
+                st.error("請輸入標代號")
+            elif q_in is None or q_in <= 0:
+                st.error("請輸入正確的股數 (必須大於 0)")
+            elif p_in is None or p_in <= 0:
+                st.error("請輸入正確的價格 (必須大於 0)")
+            else:
+                # 確保存入的是數字類型而非其他對象
+                try:
+                    save_q = float(q_in)
+                    save_p = float(p_in)
+                    save_sl = float(sl_in) if sl_in is not None else 0.0
+                    
+                    new_row = {
+                        "Date": d_in, "Symbol": s_in, "Action": act_in, "Strategy": st_in, 
+                        "Price": save_p, "Quantity": save_q, "Stop_Loss": save_sl, 
+                        "Setup_Grade": grade, "Fees": 0, "Notes": note_in, "Timestamp": int(time.time())
+                    }
+                    df_raw = pd.concat([df_raw, pd.DataFrame([new_row])], ignore_index=True)
+                    save_all_data(df_raw)
+                    st.success(f"成功紀錄 {s_in}")
+                    st.rerun()
+                except ValueError:
+                    st.error("輸入格式錯誤，請確保股數與價格為數字")
 
 # --- 主畫面 ---
 t1, t2, t3, t4 = st.tabs(["📊 績效矩陣", "🎯 即時持倉監控", "📖 交易日誌", "🛠️ 管理"])
 
 with t1:
-    # 修正：確保 now 和 sl 是數值而非 Series
     portfolio_risk = 0
     if active_pos:
         cur_prices, _ = get_momentum_data(list(active_pos.keys()))
         for s, d in active_pos.items():
             now = cur_prices.get(s)
             if now is not None and d['sl'] is not None:
-                # 確保 now 是 float
                 risk = (float(now) - float(d['sl'])) * d['qty']
                 portfolio_risk += max(0, risk)
 
@@ -225,7 +244,6 @@ with t3:
 
 with t4:
     st.write("### 數據管理與修正")
-    # 編輯功能：刪除特定交易
     if not df_raw.empty:
         st.write("選擇要刪除的交易紀錄：")
         df_for_del = df_raw.sort_values("Timestamp", ascending=False)
