@@ -292,7 +292,10 @@ with t4:
 
 with t5:
     st.subheader("🛠️ 數據編輯與管理")
+    
     if not df.empty:
+        # 修改/刪除特定單筆紀錄
+        st.markdown("### 📝 編輯單筆交易")
         edit_df = df.sort_values("Timestamp", ascending=False)
         selected_trade_idx = st.selectbox(
             "選擇要修改或刪除的交易", 
@@ -302,7 +305,6 @@ with t5:
         
         trade_to_edit = df.loc[selected_trade_idx].copy()
         
-        st.markdown("---")
         col_e1, col_e2, col_e3 = st.columns(3)
         new_date = col_e1.date_input("修改日期", value=pd.to_datetime(trade_to_edit['Date']))
         new_price = col_e2.number_input("修改價格", value=float(trade_to_edit['Price']))
@@ -336,5 +338,21 @@ with t5:
             st.warning("紀錄已刪除。")
             time.sleep(0.5)
             st.rerun()
+
+        st.divider()
+        
+        # 清空所有數據功能
+        st.markdown("### ⚠️ 危險區域")
+        confirm_clear = st.checkbox("我確定要刪除**所有**歷史交易紀錄（此操作無法復原）")
+        if st.button("🔥 重置所有交易數據", type="secondary", disabled=not confirm_clear):
+            new_empty_df = pd.DataFrame(columns=[
+                "Date", "Symbol", "Action", "Strategy", "Price", "Quantity", 
+                "Stop_Loss", "Fees", "Emotion", "Risk_Reward", "Notes", "Img", "Timestamp"
+            ])
+            save_all_data(new_empty_df)
+            st.success("所有歷史紀錄已清空！")
+            time.sleep(1)
+            st.rerun()
+            
     else:
         st.info("尚無紀錄可供編輯。")
