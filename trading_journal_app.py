@@ -61,7 +61,7 @@ def get_hkd_value(symbol, value):
         return value * USD_HKD_RATE
     return value
 
-# --- 2. 核心邏輯 ---
+# --- 2. 核心邏輯 (修正後的損益計算) ---
 def calculate_portfolio(df):
     if df.empty: return {}, 0, pd.DataFrame(), pd.DataFrame()
     
@@ -69,6 +69,9 @@ def calculate_portfolio(df):
     df = df.sort_values(by="Timestamp")
     total_realized_pnl_hkd = 0
     running_pnl_hkd = 0
+    
+    # 用於追蹤「從0開始到歸零」的交易週期
+    # cycle_tracker 存儲該代號當前週期的現金流總和
     cycle_tracker = {}
     completed_trades = [] 
     equity_curve = []
@@ -76,7 +79,6 @@ def calculate_portfolio(df):
     for _, row in df.iterrows():
         sym = str(row['Symbol']) if pd.notnull(row['Symbol']) else ""
         action = str(row['Action']) if pd.notnull(row['Action']) else ""
-        
         if not sym or not action: continue
 
         qty = float(row['Quantity']) if pd.notnull(row['Quantity']) else 0.0
@@ -84,14 +86,29 @@ def calculate_portfolio(df):
         sl = float(row['Stop_Loss']) if pd.notnull(row['Stop_Loss']) else 0.0
         date = row['Date']
         
+        # 初始化持倉狀態
         if sym not in positions:
             positions[sym] = {'qty': 0.0, 'avg_price': 0.0, 'last_sl': 0.0}
-            cycle_tracker[sym] = {'pnl_hkd': 0.0, 'start_date': date}
+        
+        # 初始化週期追蹤 (採用現金流法：買入為負，賣出為正)
+        if sym not in cycle_tracker:
+            cycle_tracker[sym] = {'cash_flow_hkd': 0.0, 'start_date': date, 'is_active': False}
             
         curr = positions[sym]
         if sl > 0: curr['last_sl'] = sl
         
+        # 標記週期開始
+        if not cycle_tracker[sym]['is_active'] and qty > 0:
+            cycle_tracker[sym]['is_active'] = True
+            cycle_tracker[sym]['start_date'] = date
+            cycle_tracker[sym]['cash_flow_hkd'] = 0.0
+
         if "買入 Buy" in action:
+            # 買入：現金流出
+            cost_hkd = get_hkd_value(sym, qty * price)
+            cycle_tracker[sym]['cash_flow_hkd'] -= cost_hkd
+            
+            # 更新平均成本 (僅供持倉顯示參考)
             total_cost = (curr['qty'] * curr['avg_price']) + (qty * price)
             new_qty = curr['qty'] + qty
             if new_qty > 0:
@@ -101,26 +118,30 @@ def calculate_portfolio(df):
         elif "賣出 Sell" in action:
             if curr['qty'] > 0:
                 sell_qty = min(qty, curr['qty'])
-                pnl_raw = (price - curr['avg_price']) * sell_qty
-                pnl_hkd = get_hkd_value(sym, pnl_raw)
-                total_realized_pnl_hkd += pnl_hkd
-                running_pnl_hkd += pnl_hkd
-                cycle_tracker[sym]['pnl_hkd'] += pnl_hkd
+                
+                # 賣出：現金流入
+                revenue_hkd = get_hkd_value(sym, sell_qty * price)
+                cycle_tracker[sym]['cash_flow_hkd'] += revenue_hkd
+                
+                # 計算本次動作對「總已實現損益」的貢獻 (按比例計算成本)
+                realized_pnl_this_time = get_hkd_value(sym, (price - curr['avg_price']) * sell_qty)
+                total_realized_pnl_hkd += realized_pnl_this_time
+                running_pnl_hkd += realized_pnl_this_time
+                
                 curr['qty'] -= sell_qty
                 
+                # 檢查是否歸零 (Trade 完成)
                 if curr['qty'] < 0.0001:
                     completed_trades.append({
                         "Exit_Date": date,
                         "Entry_Date": cycle_tracker[sym]['start_date'],
                         "Symbol": sym, 
-                        "TotalPnL_HKD": cycle_tracker[sym]['pnl_hkd']
+                        "TotalPnL_HKD": cycle_tracker[sym]['cash_flow_hkd'] # 最終週期現金流即為總損益
                     })
-                    cycle_tracker[sym] = {'pnl_hkd': 0.0, 'start_date': None} 
+                    cycle_tracker[sym]['is_active'] = False
+                    cycle_tracker[sym]['cash_flow_hkd'] = 0.0
                 
                 equity_curve.append({"Date": date, "Cumulative PnL": running_pnl_hkd})
-        
-        if "買入 Buy" in action and cycle_tracker[sym]['start_date'] is None:
-            cycle_tracker[sym]['start_date'] = date
 
     active_positions = {k: v for k, v in positions.items() if v['qty'] > 0.0001}
     return active_positions, total_realized_pnl_hkd, pd.DataFrame(completed_trades), pd.DataFrame(equity_curve)
@@ -271,32 +292,17 @@ with t4:
 
 with t5:
     st.subheader("🛠️ 數據管理")
-    with st.expander("📤 批量上傳交易紀錄"):
-        template_cols = ["Date", "Symbol", "Action", "Strategy", "Price", "Quantity", "Stop_Loss", "Emotion", "Risk_Reward", "Notes"]
-        template_data = pd.DataFrame([["2024-01-01", "700.HK", "B", "Breakout", 300.5, 100, 280, "平靜", 2.0, "突破買入"]], columns=template_cols)
-        csv_buffer = io.StringIO()
-        template_data.to_csv(csv_buffer, index=False)
-        st.download_button("📥 下載 CSV 範本", csv_buffer.getvalue(), "template.csv", "text/csv")
-        uploaded_file = st.file_uploader("選擇檔案", type=["xlsx", "csv"])
-        if uploaded_file and st.button("🚀 開始匯入"):
-            new_trades = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
-            new_trades['Timestamp'] = int(time.time())
-            df = pd.concat([df, new_trades], ignore_index=True)
-            save_all_data(df); st.rerun()
-
     if not df.empty:
         st.markdown("### 📝 編輯或刪除紀錄")
         selected_idx = st.selectbox("選擇紀錄進行操作", df.index, format_func=lambda x: f"[{df.loc[x, 'Date']}] {df.loc[x, 'Symbol']} - {df.loc[x, 'Action']} ({df.loc[x, 'Quantity']} 股)")
         t_edit = df.loc[selected_idx]
         
-        # 編輯面板
         col_e1, col_e2, col_e3 = st.columns(3)
         n_p = col_e1.number_input("價格", value=float(t_edit['Price']))
         n_q = col_e2.number_input("股數", value=float(t_edit['Quantity']))
         n_sl = col_e3.number_input("停損價格", value=float(t_edit['Stop_Loss']))
         
         edit_col1, edit_col2 = st.columns(2)
-        
         if edit_col1.button("💾 更新此筆紀錄", use_container_width=True):
             df.loc[selected_idx, 'Price'] = n_p
             df.loc[selected_idx, 'Quantity'] = n_q
@@ -310,14 +316,5 @@ with t5:
             df = df.drop(selected_idx).reset_index(drop=True)
             save_all_data(df)
             st.warning("紀錄已刪除。")
-            time.sleep(0.5)
-            st.rerun()
-            
-        st.divider()
-        st.markdown("### ⚠️ 危險區域")
-        confirm = st.checkbox("我確認要清空整個數據庫的所有紀錄")
-        if st.button("🔥 清空所有數據", disabled=not confirm, type="primary"):
-            save_all_data(pd.DataFrame(columns=df.columns))
-            st.error("所有數據已清除。")
             time.sleep(0.5)
             st.rerun()
