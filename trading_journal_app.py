@@ -262,12 +262,9 @@ with t2:
             now = live_prices.get(s)
             qty, avg_p, last_sl = d['qty'], d['avg_price'], d['last_sl']
             
-            # 損益與風險計算 (原始幣種)
             un_pnl_raw = (now - avg_p) * qty if now else 0
             sl_risk_raw = (now - last_sl) * qty if (now and last_sl > 0) else 0
-            # 新增部位價值
             pos_size_raw = now * qty if now else 0
-            
             roi = (un_pnl_raw/(qty * avg_p)*100) if (now and avg_p!=0) else 0
 
             processed_p_data.append({
@@ -283,24 +280,23 @@ with t2:
             })
         p_df = pd.DataFrame(processed_p_data)
         
-        # 定義欄位配置，強制 2 位小數與千分位 (format="%,.2f")
         st.dataframe(
             p_df, 
             column_config={
                 "報酬%": st.column_config.ProgressColumn(
                     "報酬%", 
-                    format="%.2f%%", # 報酬百分比也改為 2 位小數
+                    format="%.2f%%", 
                     min_value=-20, 
                     max_value=20,
                     color="green" if p_df["報酬%"].mean() >= 0 else "red" 
                 ),
-                "持股數": st.column_config.NumberColumn("持股數", format="%,.2f"), # 改為 2 位小數
-                "部位價值": st.column_config.NumberColumn("部位價值 (原始幣種)", format="%,.2f"),
-                "停損回撤": st.column_config.NumberColumn("停損回撤 (原始幣種)", format="%,.2f"),
-                "未實現損益": st.column_config.NumberColumn("未實現損益 (原始幣種)", format="%,.2f"),
-                "平均成本": st.column_config.NumberColumn("平均成本", format="%,.2f"),
-                "現價": st.column_config.NumberColumn("現價", format="%,.2f"),
-                "停損價": st.column_config.NumberColumn("停損價", format="%,.2f")
+                "持股數": st.column_config.NumberColumn("持股數", format="%.2f"),
+                "部位價值": st.column_config.NumberColumn("部位價值 (原始幣種)", format="%.2f"),
+                "停損回撤": st.column_config.NumberColumn("停損回撤 (原始幣種)", format="%.2f"),
+                "未實現損益": st.column_config.NumberColumn("未實現損益 (原始幣種)", format="%.2f"),
+                "平均成本": st.column_config.NumberColumn("平均成本", format="%.2f"),
+                "現價": st.column_config.NumberColumn("現價", format="%.2f"),
+                "停損價": st.column_config.NumberColumn("停損價", format="%.2f")
             }, 
             hide_index=True, 
             use_container_width=True
@@ -329,8 +325,6 @@ with t4:
 
 with t5:
     st.subheader("🛠️ 數據管理")
-    
-    # 1. 批量匯入區
     with st.expander("📤 批量上傳交易紀錄"):
         uploaded_file = st.file_uploader("選擇 CSV 或 Excel 檔案", type=["csv", "xlsx"])
         if uploaded_file and st.button("🚀 開始匯入"):
@@ -348,15 +342,11 @@ with t5:
             except Exception as e:
                 st.error(f"匯入失敗: {e}")
 
-    # 2. 編輯與刪除區
     if not df.empty:
         st.markdown("### 📝 編輯或刪除紀錄")
         selected_idx = st.selectbox("選擇紀錄進行操作", df.index, format_func=lambda x: f"[{df.loc[x, 'Date']}] {df.loc[x, 'Symbol']} - {df.loc[x, 'Action']} ({df.loc[x, 'Quantity']} 股)")
-        
         t_edit = df.loc[selected_idx]
         col_e1, col_e2, col_e3 = st.columns(3)
-        
-        # 使用動態 Key 確保選中新紀錄時輸入框內容會更新
         n_p = col_e1.number_input("編輯價格", value=float(t_edit['Price']), key=f"edit_price_{selected_idx}")
         n_q = col_e2.number_input("編輯股數", value=float(t_edit['Quantity']), key=f"edit_qty_{selected_idx}")
         n_sl = col_e3.number_input("編輯停損價格", value=float(t_edit['Stop_Loss']), key=f"edit_sl_{selected_idx}")
@@ -380,11 +370,8 @@ with t5:
             st.rerun()
 
         st.divider()
-        
-        # 3. 數據重設區
         st.markdown("### ⚙️ 數據重設")
         confirm_reset = st.checkbox("我確定要清空所有交易歷史紀錄 (此操作不可撤銷)")
-        
         if confirm_reset:
             if st.button("執行清空所有數據", use_container_width=True):
                 empty_df = pd.DataFrame(columns=[
