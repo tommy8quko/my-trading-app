@@ -82,6 +82,7 @@ def calculate_portfolio(df):
         curr = positions[sym]
         if sl > 0: curr['last_sl'] = sl
         
+        # 這裡的邏輯包含原有的字串識別
         if "買入 Buy" in action:
             total_cost = (curr['qty'] * curr['avg_price']) + (qty * price)
             new_qty = curr['qty'] + qty
@@ -238,6 +239,7 @@ with t5:
     with st.expander("📤 批量上傳交易紀錄"):
         st.write("請確保 CSV/Excel 欄位名稱如下：")
         st.code("Date, Symbol, Action, Strategy, Price, Quantity, Stop_Loss, Emotion, Risk_Reward, Notes")
+        st.info("提示：Action 欄位現在支援填寫 'B' (買入) 或 'S' (賣出)。")
         
         template = pd.DataFrame(columns=["Date", "Symbol", "Action", "Strategy", "Price", "Quantity", "Stop_Loss", "Emotion", "Risk_Reward", "Notes"])
         csv_template = template.to_csv(index=False).encode('utf-8-sig')
@@ -254,6 +256,15 @@ with t5:
                 if 'Timestamp' not in new_trades.columns: new_trades['Timestamp'] = int(time.time())
                 if 'Fees' not in new_trades.columns: new_trades['Fees'] = 0
                 
+                # --- 自動識別 B/S 並轉換為系統格式 ---
+                def map_action(a):
+                    a_str = str(a).upper().strip()
+                    if a_str == "B": return "買入 Buy"
+                    if a_str == "S": return "賣出 Sell"
+                    return a # 如果原本就是 "買入 Buy" 則保持不變
+                
+                new_trades['Action'] = new_trades['Action'].apply(map_action)
+                
                 new_trades['Symbol'] = new_trades['Symbol'].apply(lambda s: str(s).upper().strip().zfill(4) + ".HK" if str(s).strip().isdigit() else str(s).upper().strip())
                 new_trades['Date'] = pd.to_datetime(new_trades['Date']).dt.strftime('%Y-%m-%d')
                 
@@ -265,7 +276,7 @@ with t5:
 
     st.divider()
 
-    # --- 2. 原始編輯功能 (完整保留並優化) ---
+    # --- 2. 原始編輯功能 ---
     if not df.empty:
         st.markdown("### 📝 編輯/刪除單筆交易")
         edit_df = df.sort_values("Timestamp", ascending=False)
@@ -277,7 +288,6 @@ with t5:
         
         t_edit = df.loc[selected_idx].copy()
         
-        # 編輯欄位佈局
         col_e1, col_e2, col_e3 = st.columns(3)
         n_date = col_e1.date_input("修改日期", value=pd.to_datetime(t_edit['Date']))
         n_price = col_e2.number_input("修改價格", value=float(t_edit['Price']))
