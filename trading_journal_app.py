@@ -234,21 +234,14 @@ with t4:
 with t5:
     st.subheader("🛠️ 數據管理與批量上傳")
     
-    # --- 批量上傳功能 ---
+    # --- 1. 批量上傳功能 ---
     with st.expander("📤 批量上傳交易紀錄"):
         st.write("請確保 CSV/Excel 欄位名稱如下：")
         st.code("Date, Symbol, Action, Strategy, Price, Quantity, Stop_Loss, Emotion, Risk_Reward, Notes")
         
-        # 範例下載 (改為 CSV 格式以避免 xlsxwriter 依賴錯誤)
         template = pd.DataFrame(columns=["Date", "Symbol", "Action", "Strategy", "Price", "Quantity", "Stop_Loss", "Emotion", "Risk_Reward", "Notes"])
         csv_template = template.to_csv(index=False).encode('utf-8-sig')
-        
-        st.download_button(
-            label="📥 下載 CSV 範本 (推薦)",
-            data=csv_template,
-            file_name="trade_template.csv",
-            mime="text/csv"
-        )
+        st.download_button(label="📥 下載 CSV 範本", data=csv_template, file_name="trade_template.csv", mime="text/csv")
         
         uploaded_file = st.file_uploader("選擇交易文件 (CSV 或 Excel)", type=["xlsx", "csv"])
         if uploaded_file:
@@ -258,46 +251,79 @@ with t5:
                 else:
                     new_trades = pd.read_excel(uploaded_file)
                 
-                # 自動補齊數據
-                if 'Timestamp' not in new_trades.columns:
-                    new_trades['Timestamp'] = int(time.time())
-                if 'Fees' not in new_trades.columns:
-                    new_trades['Fees'] = 0
+                if 'Timestamp' not in new_trades.columns: new_trades['Timestamp'] = int(time.time())
+                if 'Fees' not in new_trades.columns: new_trades['Fees'] = 0
                 
-                # 代號轉換邏輯
                 new_trades['Symbol'] = new_trades['Symbol'].apply(lambda s: str(s).upper().strip().zfill(4) + ".HK" if str(s).strip().isdigit() else str(s).upper().strip())
                 new_trades['Date'] = pd.to_datetime(new_trades['Date']).dt.strftime('%Y-%m-%d')
                 
                 if st.button("🚀 確認上傳並合併數據"):
                     df = pd.concat([df, new_trades], ignore_index=True)
-                    save_all_data(df)
-                    st.success(f"已成功上傳 {len(new_trades)} 筆交易！")
-                    time.sleep(1)
-                    st.rerun()
+                    save_all_data(df); st.success(f"已上傳 {len(new_trades)} 筆交易！"); time.sleep(1); st.rerun()
             except Exception as e:
-                st.error(f"解析失敗，請檢查欄位格式。錯誤詳情：{e}")
+                st.error(f"解析失敗：{e}")
 
     st.divider()
+
+    # --- 2. 原始編輯功能 (完整保留並優化) ---
     if not df.empty:
         st.markdown("### 📝 編輯/刪除單筆交易")
         edit_df = df.sort_values("Timestamp", ascending=False)
-        selected_idx = st.selectbox("選擇交易", edit_df.index, format_func=lambda x: f"[{df.loc[x, 'Date']}] {df.loc[x, 'Symbol']} - {df.loc[x, 'Action']}")
+        selected_idx = st.selectbox(
+            "選擇要修改的交易紀錄", 
+            edit_df.index, 
+            format_func=lambda x: f"[{df.loc[x, 'Date']}] {df.loc[x, 'Symbol']} - {df.loc[x, 'Action']} (${df.loc[x, 'Price']})"
+        )
+        
         t_edit = df.loc[selected_idx].copy()
         
-        ce1, ce2, ce3 = st.columns(3)
-        n_date = ce1.date_input("日期", value=pd.to_datetime(t_edit['Date']))
-        n_price = ce2.number_input("價格", value=float(t_edit['Price']))
-        n_qty = ce3.number_input("股數", value=float(t_edit['Quantity']))
+        # 編輯欄位佈局
+        col_e1, col_e2, col_e3 = st.columns(3)
+        n_date = col_e1.date_input("修改日期", value=pd.to_datetime(t_edit['Date']))
+        n_price = col_e2.number_input("修改價格", value=float(t_edit['Price']))
+        n_qty = col_e3.number_input("修改股數", value=float(t_edit['Quantity']))
         
-        if st.button("💾 更新"):
-            df.loc[selected_idx, ['Date', 'Price', 'Quantity']] = [n_date.strftime('%Y-%m-%d'), n_price, n_qty]
-            save_all_data(df); st.success("更新成功！"); time.sleep(0.5); st.rerun()
+        col_e4, col_e5, col_e6 = st.columns(3)
+        n_sl = col_e4.number_input("修改停損價", value=float(t_edit['Stop_Loss']))
+        n_strategy = col_e5.text_input("修改策略", value=str(t_edit['Strategy']))
+        
+        emo_options = ["恐慌", "猶豫", "平靜", "自信", "衝動"]
+        current_emo = t_edit['Emotion'] if t_edit['Emotion'] in emo_options else "平靜"
+        n_emotion = col_e6.selectbox("修改心理狀態", emo_options, index=emo_options.index(current_emo))
+        
+        n_notes = st.text_area("修改決策筆記", value=str(t_edit['Notes']))
+        
+        btn_col1, btn_col2, _ = st.columns([1, 1, 2])
+        
+        if btn_col1.button("💾 更新此筆紀錄", use_container_width=True):
+            df.loc[selected_idx, 'Date'] = n_date.strftime('%Y-%m-%d')
+            df.loc[selected_idx, 'Price'] = n_price
+            df.loc[selected_idx, 'Quantity'] = n_qty
+            df.loc[selected_idx, 'Stop_Loss'] = n_sl
+            df.loc[selected_idx, 'Strategy'] = n_strategy
+            df.loc[selected_idx, 'Emotion'] = n_emotion
+            df.loc[selected_idx, 'Notes'] = n_notes
+            save_all_data(df)
+            st.success("✅ 紀錄已更新！")
+            time.sleep(0.5)
+            st.rerun()
             
-        if st.button("🗑️ 刪除"):
-            df = df.drop(selected_idx); save_all_data(df); st.warning("已刪除"); time.sleep(0.5); st.rerun()
+        if btn_col2.button("🗑️ 刪除此筆紀錄", use_container_width=True):
+            df = df.drop(selected_idx)
+            save_all_data(df)
+            st.warning("⚠️ 紀錄已刪除。")
+            time.sleep(0.5)
+            st.rerun()
 
         st.divider()
+
+        # --- 3. 危險區域 ---
         st.markdown("### ⚠️ 危險區域")
-        confirm = st.checkbox("確定清空所有數據")
-        if st.button("🔥 重置所有數據", disabled=not confirm):
-            save_all_data(pd.DataFrame(columns=df.columns)); st.success("已清空"); time.sleep(1); st.rerun()
+        confirm = st.checkbox("我確定要刪除所有歷史交易紀錄（此操作無法復原）")
+        if st.button("🔥 重置所有數據", disabled=not confirm, type="secondary"):
+            save_all_data(pd.DataFrame(columns=df.columns))
+            st.success("所有數據已清空！")
+            time.sleep(1)
+            st.rerun()
+    else:
+        st.info("尚無數據可供編輯。")
