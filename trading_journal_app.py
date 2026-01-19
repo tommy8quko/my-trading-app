@@ -283,18 +283,18 @@ with t2:
             })
         p_df = pd.DataFrame(processed_p_data)
         
-        # 定義欄位配置，啟用千分位格式 (format="%,.2f")
+        # 定義欄位配置，強制 2 位小數與千分位 (format="%,.2f")
         st.dataframe(
             p_df, 
             column_config={
                 "報酬%": st.column_config.ProgressColumn(
                     "報酬%", 
-                    format="%.1f%%", 
+                    format="%.2f%%", # 報酬百分比也改為 2 位小數
                     min_value=-20, 
                     max_value=20,
                     color="green" if p_df["報酬%"].mean() >= 0 else "red" 
                 ),
-                "持股數": st.column_config.NumberColumn("持股數", format="%,.0f"),
+                "持股數": st.column_config.NumberColumn("持股數", format="%,.2f"), # 改為 2 位小數
                 "部位價值": st.column_config.NumberColumn("部位價值 (原始幣種)", format="%,.2f"),
                 "停損回撤": st.column_config.NumberColumn("停損回撤 (原始幣種)", format="%,.2f"),
                 "未實現損益": st.column_config.NumberColumn("未實現損益 (原始幣種)", format="%,.2f"),
