@@ -103,36 +103,37 @@ def calculate_portfolio(df):
             }
     return active_summary, total_realized_pnl, pd.DataFrame(trade_history), pd.DataFrame(equity_curve)
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def get_momentum_data(symbols_list):
-    if not symbols_list: return {}, {}
+    if not symbols_list: return {}
     try:
-        data = yf.download(symbols_list + ["SPY"], period="3mo", progress=False)
+        # 確保代號列表包含 SPY 用於大盤對照（雖然目前 UI 隱藏，但邏輯保留以防需要）
+        search_list = list(set(symbols_list + ["SPY"]))
+        data = yf.download(search_list, period="5d", progress=False)
+        
         prices = {}
-        rs_scores = {}
         
-        spy_close = data['Close']['SPY']
-        spy_perf = (float(spy_close.iloc[-1]) / float(spy_close.iloc[0])) - 1
-        
-        for sym in symbols_list:
-            if len(symbols_list) + 1 > 1:
-                s_series = data['Close'][sym]
-            else:
-                s_series = data['Close']
-            
-            current_price = float(s_series.iloc[-1])
-            initial_price = float(s_series.iloc[0])
-            
-            prices[sym] = current_price
-            s_perf = (current_price / initial_price) - 1
-            rs_scores[sym] = (s_perf - spy_perf) * 100
-            
-        return prices, rs_scores
+        # 處理 yfinance 可能回傳的 MultiIndex 結構
+        if 'Close' in data:
+            close_data = data['Close']
+            for sym in symbols_list:
+                try:
+                    if isinstance(close_data, pd.DataFrame):
+                        # 取得該標的最後一個非空價格
+                        val = close_data[sym].dropna().iloc[-1]
+                    else:
+                        # 只有單一標的情況
+                        val = close_data.dropna().iloc[-1]
+                    prices[sym] = float(val)
+                except Exception:
+                    prices[sym] = 0.0
+        return prices
     except Exception as e:
-        return {}, {}
+        st.error(f"抓取股價出錯: {e}")
+        return {}
 
 # --- 3. UI 介面 ---
-st.title("🏹 Momentum Pro Alpha v3.8")
+st.title("🏹 Momentum Pro Alpha v3.9")
 st.markdown("""
 <style>
     .stMetric { background: #1E1E1E; color: white; padding: 15px; border-radius: 8px; border-left: 5px solid #00FFAA; }
@@ -159,7 +160,6 @@ with st.sidebar:
         act_in = st.radio("動作", ["買入 Buy", "賣出 Sell"], horizontal=True)
         c1, c2, c3 = st.columns(3)
         
-        # 安全性強化：value=None 且強制數字類型檢查
         q_in = c1.number_input("股數", min_value=0.0, step=1.0, format="%.0f", value=None)
         p_in = c2.number_input("價格", min_value=0.0, step=0.01, format="%.2f", value=None)
         sl_in = c3.number_input("止損", min_value=0.0, step=0.01, format="%.2f", value=None)
@@ -168,7 +168,6 @@ with st.sidebar:
         note_in = st.text_area("筆記")
         
         if st.form_submit_button("儲存紀錄"):
-            # 嚴格安全性檢查：確保不是 None 且必須是正數
             if not s_in:
                 st.error("請輸入標代號")
             elif q_in is None or q_in <= 0:
@@ -176,7 +175,6 @@ with st.sidebar:
             elif p_in is None or p_in <= 0:
                 st.error("請輸入正確的價格 (必須大於 0)")
             else:
-                # 確保存入的是數字類型而非其他對象
                 try:
                     save_q = float(q_in)
                     save_p = float(p_in)
@@ -192,7 +190,7 @@ with st.sidebar:
                     st.success(f"成功紀錄 {s_in}")
                     st.rerun()
                 except ValueError:
-                    st.error("輸入格式錯誤，請確保股數與價格為數字")
+                    st.error("輸入格式錯誤")
 
 # --- 主畫面 ---
 t1, t2, t3, t4 = st.tabs(["📊 績效矩陣", "🎯 即時持倉監控", "📖 交易日誌", "🛠️ 管理"])
@@ -200,10 +198,10 @@ t1, t2, t3, t4 = st.tabs(["📊 績效矩陣", "🎯 即時持倉監控", "📖 
 with t1:
     portfolio_risk = 0
     if active_pos:
-        cur_prices, _ = get_momentum_data(list(active_pos.keys()))
+        cur_prices = get_momentum_data(list(active_pos.keys()))
         for s, d in active_pos.items():
-            now = cur_prices.get(s)
-            if now is not None and d['sl'] is not None:
+            now = cur_prices.get(s, 0.0)
+            if now > 0 and d['sl'] is not None:
                 risk = (float(now) - float(d['sl'])) * d['qty']
                 portfolio_risk += max(0, risk)
 
@@ -219,42 +217,47 @@ with t1:
     c4.metric("總風險敞口", f"${portfolio_risk:,.0f}", delta_color="inverse")
 
     if not equity_df.empty:
-        st.plotly_chart(px.line(equity_df, x="Date", y="Cumulative PnL"), use_container_width=True)
+        st.plotly_chart(px.line(equity_df, x="Date", y="Cumulative PnL", title="資金增長曲線"), use_container_width=True)
 
 with t2:
     if active_pos:
-        prices, rs_scores = get_momentum_data(list(active_pos.keys()))
+        prices = get_momentum_data(list(active_pos.keys()))
         p_list = []
         for s, d in active_pos.items():
-            now = prices.get(s, 0)
-            rs = rs_scores.get(s, 0)
-            un_pnl = (now - d['avg_price']) * d['qty']
-            risk_val = (now - d['sl']) * d['qty'] if (now and d['sl']) else 0
+            now = prices.get(s, 0.0)
+            un_pnl = (now - d['avg_price']) * d['qty'] if now > 0 else 0.0
+            risk_val = (now - d['sl']) * d['qty'] if (now > 0 and d['sl']) else 0.0
+            
             p_list.append({
-                "代號": s, "RS": f"{rs:+.1f}%", "加倉": d['lots_count'],
-                "總股數": d['qty'], "成本": round(d['avg_price'],2),
-                "現價": round(now,2), "未實現": round(un_pnl,2),
-                "風險": f"-${risk_val:,.0f}" if risk_val > 0 else "Free Trade"
+                "代號": s, 
+                "加倉次數": d['lots_count'],
+                "總股數": d['qty'], 
+                "平均成本": round(d['avg_price'], 2),
+                "止損價": round(d['sl'], 2) if d['sl'] else "未設定",
+                "現價": round(now, 2) if now > 0 else "抓取中...", 
+                "未實現損益": round(un_pnl, 2) if now > 0 else "--",
+                "預期回撤風險": f"-${risk_val:,.0f}" if risk_val > 0 else "Free Trade"
             })
         st.table(pd.DataFrame(p_list))
-    else: st.info("無持倉")
+    else: 
+        st.info("目前無在場持倉。")
 
 with t3:
     st.dataframe(df_raw.sort_values("Timestamp", ascending=False), use_container_width=True)
 
 with t4:
-    st.write("### 數據管理與修正")
+    st.write("### 數據管理")
     if not df_raw.empty:
         st.write("選擇要刪除的交易紀錄：")
         df_for_del = df_raw.sort_values("Timestamp", ascending=False)
-        to_del = st.multiselect("勾選時間戳記", df_for_del['Timestamp'].tolist())
+        to_del = st.multiselect("勾選時間戳記 (Timestamp)", df_for_del['Timestamp'].tolist())
         if st.button("確認刪除選中紀錄"):
             df_raw = df_raw[~df_raw['Timestamp'].isin(to_del)]
             save_all_data(df_raw)
             st.success("紀錄已更新")
             st.rerun()
             
-    if st.button("🚨 危險：清空所有數據"):
+    if st.button("🚨 清空所有數據"):
         if os.path.exists(FILE_NAME): 
             os.remove(FILE_NAME)
             st.rerun()
