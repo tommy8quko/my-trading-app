@@ -317,35 +317,67 @@ with t4:
 
 with t5:
     st.subheader("🛠️ 數據管理")
+    
+    # 1. 批量匯入區
     with st.expander("📤 批量上傳交易紀錄"):
         uploaded_file = st.file_uploader("選擇 CSV 或 Excel 檔案", type=["csv", "xlsx"])
         if uploaded_file and st.button("🚀 開始匯入"):
-            new_data = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
-            if 'Symbol' in new_data.columns:
-                new_data['Symbol'] = new_data['Symbol'].apply(format_symbol)
-            if 'Timestamp' not in new_data.columns:
-                new_data['Timestamp'] = int(time.time())
-            df = pd.concat([df, new_data], ignore_index=True)
-            save_all_data(df)
-            st.success("數據匯入成功！")
-            time.sleep(0.5)
-            st.rerun()
+            try:
+                new_data = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+                if 'Symbol' in new_data.columns:
+                    new_data['Symbol'] = new_data['Symbol'].apply(format_symbol)
+                if 'Timestamp' not in new_data.columns:
+                    new_data['Timestamp'] = int(time.time())
+                df = pd.concat([df, new_data], ignore_index=True)
+                save_all_data(df)
+                st.success("✅ 數據匯入成功！")
+                time.sleep(0.5)
+                st.rerun()
+            except Exception as e:
+                st.error(f"匯入失敗: {e}")
 
+    # 2. 編輯與刪除區
     if not df.empty:
         st.markdown("### 📝 編輯或刪除紀錄")
         selected_idx = st.selectbox("選擇紀錄進行操作", df.index, format_func=lambda x: f"[{df.loc[x, 'Date']}] {df.loc[x, 'Symbol']} - {df.loc[x, 'Action']} ({df.loc[x, 'Quantity']} 股)")
+        
         t_edit = df.loc[selected_idx]
         col_e1, col_e2, col_e3 = st.columns(3)
-        n_p = col_e1.number_input("價格", value=float(t_edit['Price']))
-        n_q = col_e2.number_input("股數", value=float(t_edit['Quantity']))
-        n_sl = col_e3.number_input("停損價格", value=float(t_edit['Stop_Loss']))
-        if st.button("💾 更新此筆紀錄", use_container_width=True):
+        n_p = col_e1.number_input("編輯價格", value=float(t_edit['Price']), key="edit_price")
+        n_q = col_e2.number_input("編輯股數", value=float(t_edit['Quantity']), key="edit_qty")
+        n_sl = col_e3.number_input("編輯停損價格", value=float(t_edit['Stop_Loss']), key="edit_sl")
+        
+        btn_col1, btn_col2 = st.columns(2)
+        if btn_col1.button("💾 更新此筆紀錄", use_container_width=True):
             df.loc[selected_idx, 'Price'] = n_p
             df.loc[selected_idx, 'Quantity'] = n_q
             df.loc[selected_idx, 'Stop_Loss'] = n_sl
             save_all_data(df)
+            st.success(f"✅ {df.loc[selected_idx, 'Symbol']} 紀錄已更新！")
+            time.sleep(0.5)
             st.rerun()
-        if st.button("🗑️ 刪除此筆紀錄", use_container_width=True, type="secondary"):
+            
+        if btn_col2.button("🗑️ 刪除此筆紀錄", use_container_width=True, type="secondary"):
+            target_sym = df.loc[selected_idx, 'Symbol']
             df = df.drop(selected_idx).reset_index(drop=True)
             save_all_data(df)
+            st.warning(f"🗑️ {target_sym} 紀錄已刪除。")
+            time.sleep(0.5)
             st.rerun()
+
+        st.divider()
+        
+        # 3. 危險操作區
+        st.markdown("### ⚠️ 危險操作")
+        if st.button("🧹 清空所有歷史數據", type="primary", use_container_width=True):
+            # 建立空的 DataFrame
+            empty_df = pd.DataFrame(columns=[
+                "Date", "Symbol", "Action", "Strategy", "Price", "Quantity", 
+                "Stop_Loss", "Fees", "Emotion", "Risk_Reward", "Notes", "Img", "Timestamp"
+            ])
+            save_all_data(empty_df)
+            st.error("💥 所有交易紀錄已清空！")
+            time.sleep(0.5)
+            st.rerun()
+    else:
+        st.info("目前沒有數據可管理。")
