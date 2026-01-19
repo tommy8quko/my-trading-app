@@ -80,21 +80,42 @@ def calculate_portfolio(df):
     active_positions = {k: v for k, v in positions.items() if v['qty'] > 0}
     return active_positions, total_realized_pnl, pd.DataFrame(trade_history), pd.DataFrame(equity_curve)
 
-# --- 3. 即時報價功能 ---
+# --- 3. 即時報價功能 (修正快取錯誤) ---
 @st.cache_data(ttl=300)
-def get_live_prices(symbols):
-    if not symbols: return {}
+def get_live_prices(symbols_list):
+    """
+    接收一個清單 (List) 而非 dict_keys
+    """
+    if not symbols_list: return {}
     try:
-        data = yf.download(list(symbols), period="1d", progress=False)['Close']
+        # 下載數據
+        data = yf.download(symbols_list, period="1d", progress=False, multi_level=False)
+        
+        # 取得最後一行的收盤價 (Close)
+        if 'Close' in data.columns:
+            close_data = data['Close']
+        else:
+            close_data = data # 有些版本的 yfinance 直接回傳 Series
+
         prices = {}
-        for sym in symbols:
+        for sym in symbols_list:
             try:
-                # 處理多標的或單標的返回格式
-                val = data[sym].iloc[-1] if len(symbols) > 1 else data.iloc[-1]
-                prices[sym] = float(val)
-            except: prices[sym] = None
+                # 處理單一標的與多標的不同格式
+                if len(symbols_list) == 1:
+                    val = close_data.iloc[-1]
+                else:
+                    val = close_data[sym].iloc[-1]
+                
+                if pd.notna(val):
+                    prices[sym] = float(val)
+                else:
+                    prices[sym] = None
+            except:
+                prices[sym] = None
         return prices
-    except: return {}
+    except Exception as e:
+        st.sidebar.error(f"報價抓取失敗: {e}")
+        return {}
 
 # --- 4. AI 分析 ---
 def fetch_ai_insight(pnl_summary, open_summary):
@@ -171,18 +192,26 @@ with t1:
 
 with t2:
     if active_pos:
-        prices = get_live_prices(active_pos.keys())
+        # 修正這裡：將 .keys() 轉換為 list
+        prices = get_live_prices(list(active_pos.keys()))
         p_data = []
         un_total = 0
         for s, d in active_pos.items():
             now = prices.get(s)
             un_pnl = (now - d['avg_price']) * d['qty'] if now else 0
             un_total += un_pnl
-            p_data.append({"代號": s, "股數": d['qty'], "成本": f"${d['avg_price']:.2f}", "現價": f"${now:.2f}" if now else "載入中", "未實現損益": un_pnl, "報酬率": f"{(un_pnl/(d['qty']*d['avg_price'])*100):.2f}%" if d['avg_price']!=0 else "0%"})
+            p_data.append({
+                "代號": s, 
+                "股數": d['qty'], 
+                "成本": f"${d['avg_price']:.2f}", 
+                "現價": f"${now:.2f}" if now else "載入中", 
+                "未實現損益": un_pnl, 
+                "報酬率": f"{(un_pnl/(d['qty']*d['avg_price'])*100):.2f}%" if d['avg_price']!=0 else "0%"
+            })
         
         st.metric("總未實現損益 (浮動)", f"${un_total:,.2f}", delta=f"{un_total:,.2f}")
         st.dataframe(pd.DataFrame(p_data), use_container_width=True, hide_index=True)
-        if st.button("🔄 刷新金價/股價"): st.cache_data.clear(); st.rerun()
+        if st.button("🔄 刷新報價"): st.cache_data.clear(); st.rerun()
     else: st.info("目前無持倉")
 
 with t3:
