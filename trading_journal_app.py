@@ -47,7 +47,7 @@ def calculate_portfolio(df):
     df = df.sort_values(by="Timestamp")
     total_realized_pnl = 0
     trade_history = [] 
-    equity_curve = []
+    equity_curve = [{"Date": df.iloc[0]['Date'], "Cumulative PnL": 0}] # 初始點
     running_pnl = 0
 
     for _, row in df.iterrows():
@@ -111,23 +111,18 @@ def plot_trade_execution(symbol, trade_date, entry_price):
 # --- 4. 即時報價與 AI ---
 @st.cache_data(ttl=300)
 def get_live_prices(symbols_list):
-    """
-    接收 list 類型的代號，確保 Streamlit 快取雜湊成功
-    """
     if not symbols_list: return {}
     try:
-        # 下載數據
         data = yf.download(symbols_list, period="1d", progress=False)['Close']
         prices = {}
         for s in symbols_list:
             try:
-                # 處理多標的與單標的返回格式差異
                 val = data[s].iloc[-1] if len(symbols_list) > 1 else data.iloc[-1]
                 prices[s] = float(val)
             except:
                 prices[s] = None
         return prices
-    except Exception as e:
+    except:
         return {}
 
 def fetch_ai_insight(pnl_summary, open_summary):
@@ -206,27 +201,37 @@ with st.sidebar:
 t1, t2, t3, t4 = st.tabs(["📈 績效矩陣", "🔥 持倉 & 報價", "🔄 交易重播", "🧠 心理 & 歷史"])
 
 with t1:
-    col1, col2, col3 = st.columns(3)
+    # --- 最大回撤計算 ---
+    max_dd = 0
+    if not equity_df.empty:
+        equity_df['Peak'] = equity_df['Cumulative PnL'].cummax()
+        equity_df['Drawdown'] = equity_df['Cumulative PnL'] - equity_df['Peak']
+        # 以金額計算的最大回撤
+        max_dd_amt = equity_df['Drawdown'].min()
+        # 以百分比計算（相對於峰值，簡單化處理）
+        max_dd = max_dd_amt
+
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("已實現損益", f"${realized_pnl:,.2f}")
     win_r = (len(history_df[history_df['PnL']>0])/len(history_df)*100) if not history_df.empty else 0
     col2.metric("勝率", f"{win_r:.1f}%")
     col3.metric("平均 R:R", f"{df['Risk_Reward'].mean():.2f}" if not df.empty else "0")
+    col4.metric("最大回撤 (MDD)", f"${max_dd:,.2f}", delta_color="inverse")
     
     if not equity_df.empty:
-        equity_df['Peak'] = equity_df['Cumulative PnL'].cummax()
-        equity_df['Drawdown'] = equity_df['Cumulative PnL'] - equity_df['Peak']
         fig_equity = px.area(equity_df, x="Date", y="Cumulative PnL", title="帳戶權益成長曲線 (Equity)", color_discrete_sequence=['#00CC96'])
         st.plotly_chart(fig_equity, use_container_width=True)
+        
         fig_dd = px.line(equity_df, x="Date", y="Drawdown", title="風險回撤圖 (Drawdown)", color_discrete_sequence=['#EF553B'])
+        fig_dd.add_hline(y=max_dd, line_dash="dash", line_color="red", annotation_text="Max Drawdown")
         st.plotly_chart(fig_dd, use_container_width=True)
 
     if st.button("🤖 獲取 AI 專業分析", use_container_width=True):
         with st.spinner("分析中..."):
-            st.info(fetch_ai_insight(f"PnL:{realized_pnl}, 勝率:{win_r}%", str(list(active_pos.keys()))))
+            st.info(fetch_ai_insight(f"PnL:{realized_pnl}, 勝率:{win_r}%, MDD:${max_dd}", str(list(active_pos.keys()))))
 
 with t2:
     if active_pos:
-        # 修正點：將 .keys() 轉換為 list，解決 UnhashableParamError
         prices = get_live_prices(list(active_pos.keys()))
         p_data = []
         for s, d in active_pos.items():
@@ -257,7 +262,7 @@ with t3:
             c2.write(f"**心理狀態：** {row['Emotion']}")
             c2.write("**當時筆記：**")
             c2.caption(row['Notes'])
-        else: st.warning("無法載入該時間段行情，請檢查代號是否正確。")
+        else: st.warning("無法載入該時間段行情。")
 
 with t4:
     c1, c2 = st.columns([1, 2])
