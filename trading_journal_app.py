@@ -31,14 +31,23 @@ init_csv()
 def load_data():
     try:
         df = pd.read_csv(FILE_NAME)
-        if not df.empty:
-            df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
-            df['Price'] = pd.to_numeric(df['Price'], errors='coerce')
-            df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce')
-            df['Stop_Loss'] = pd.to_numeric(df['Stop_Loss'], errors='coerce').fillna(0)
-            df['Timestamp'] = pd.to_numeric(df['Timestamp'], errors='coerce')
+        if df.empty:
+            return df
+            
+        # 修正 KeyError: 'Timestamp' - 如果欄位不存在則補齊
+        if 'Timestamp' not in df.columns:
+            # 根據 Date 轉換為時間戳，若 Date 也無效則用現在時間
+            df['Timestamp'] = pd.to_datetime(df['Date'], errors='coerce').view('int64') // 10**9
+            df['Timestamp'] = df['Timestamp'].replace(-9223372036, int(time.time())) # 處理無效日期
+            save_all_data(df) # 立即修復檔案
+
+        df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
+        df['Price'] = pd.to_numeric(df['Price'], errors='coerce')
+        df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce')
+        df['Stop_Loss'] = pd.to_numeric(df['Stop_Loss'], errors='coerce').fillna(0)
+        df['Timestamp'] = pd.to_numeric(df['Timestamp'], errors='coerce')
         return df
-    except:
+    except Exception as e:
         return pd.DataFrame()
 
 def save_all_data(df):
@@ -207,7 +216,6 @@ if active_pos:
         sl_risk_amt_raw = (now - last_sl) * qty if (now and last_sl > 0) else 0
         aggregate_sl_risk_hkd += get_hkd_value(s, sl_risk_amt_raw)
         
-        # 數據清理供表格使用 (Compact Format)
         processed_p_data.append({
             "Ticker": s,
             "Qty": qty,
@@ -223,8 +231,6 @@ with t2:
     st.markdown("### 🟢 持倉概覽 (Compact View)")
     if processed_p_data:
         p_df = pd.DataFrame(processed_p_data)
-        
-        # 使用 st.column_config 優化顯示，減少寬度並增加可視性
         st.dataframe(
             p_df,
             column_config={
@@ -236,7 +242,6 @@ with t2:
                 "PnL": st.column_config.NumberColumn("損益", format="$%d", width="medium"),
                 "Return%": st.column_config.ProgressColumn(
                     "報酬%",
-                    help="未實現報酬率",
                     format="%.1f%%",
                     min_value=-20,
                     max_value=20,
@@ -245,9 +250,8 @@ with t2:
             },
             hide_index=True,
             use_container_width=True,
-            height=min(len(p_df) * 35 + 40, 800) # 動態高度，支撐 30 隻股票約 1000px 以內
+            height=min(len(p_df) * 35 + 40, 800)
         )
-        
         col_risk1, col_risk2 = st.columns(2)
         col_risk1.metric("總持倉回撤風險 (SL Risk HKD)", f"${aggregate_sl_risk_hkd:,.2f}", delta_color="inverse")
         if st.button("🔄 刷新即時報價", use_container_width=True): st.cache_data.clear(); st.rerun()
@@ -268,20 +272,62 @@ with t3:
 
 with t4:
     st.subheader("📜 歷史紀錄")
-    st.dataframe(df.sort_values("Timestamp", ascending=False), use_container_width=True, hide_index=True)
+    # 這裡的 sort_values("Timestamp") 在修正 load_data 後就不會再報 KeyError
+    if not df.empty:
+        st.dataframe(df.sort_values("Timestamp", ascending=False), use_container_width=True, hide_index=True)
 
 with t5:
     st.subheader("🛠️ 數據管理")
-    with st.expander("📤 批量上傳"):
-        uploaded_file = st.file_uploader("選擇 CSV/Excel", type=["xlsx", "csv"])
-        if uploaded_file and st.button("🚀 確認上傳"):
+    
+    # --- 批量上傳功能 (含範本下載) ---
+    with st.expander("📤 批量上傳交易紀錄"):
+        st.write("請使用以下 CSV 範本填寫數據，確保欄位名稱正確：")
+        
+        # 建立範本數據
+        template_cols = ["Date", "Symbol", "Action", "Strategy", "Price", "Quantity", "Stop_Loss", "Emotion", "Risk_Reward", "Notes"]
+        template_data = pd.DataFrame([
+            ["2024-01-01", "700.HK", "B", "Breakout", 300.5, 100, 280, "平靜", 2.0, "突破轉強買入"],
+            ["2024-01-05", "TSLA", "S", "Pullback", 220.0, 50, 0, "自信", 1.5, "止盈離場"]
+        ], columns=template_cols)
+        
+        # 轉成 CSV Buffer
+        csv_buffer = io.StringIO()
+        template_data.to_csv(csv_buffer, index=False)
+        st.download_button(
+            label="📥 下載 CSV 範本",
+            data=csv_buffer.getvalue(),
+            file_name="trade_template.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+        
+        st.divider()
+        uploaded_file = st.file_uploader("選擇您的交易記錄文件 (CSV/Excel)", type=["xlsx", "csv"])
+        if uploaded_file and st.button("🚀 開始匯入數據"):
             try:
-                new_trades = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
-                new_trades['Action'] = new_trades['Action'].apply(lambda a: "買入 Buy" if str(a).upper()=="B" else ("賣出 Sell" if str(a).upper()=="S" else a))
+                if uploaded_file.name.endswith('.csv'):
+                    new_trades = pd.read_csv(uploaded_file)
+                else:
+                    new_trades = pd.read_excel(uploaded_file)
+                
+                # 自動識別 Action 欄位 (B/S 轉換)
+                def clean_action(a):
+                    val = str(a).upper().strip()
+                    if val in ["B", "BUY", "買", "買入"]: return "買入 Buy"
+                    if val in ["S", "SELL", "賣", "賣出"]: return "賣出 Sell"
+                    return a
+                
+                new_trades['Action'] = new_trades['Action'].apply(clean_action)
                 new_trades['Timestamp'] = int(time.time())
+                
+                # 數據清理與合併
                 df = pd.concat([df, new_trades], ignore_index=True)
-                save_all_data(df); st.success("已完成！"); time.sleep(1); st.rerun()
-            except Exception as e: st.error(f"錯誤: {e}")
+                save_all_data(df)
+                st.success(f"成功匯入 {len(new_trades)} 筆記錄！")
+                time.sleep(1)
+                st.rerun()
+            except Exception as e:
+                st.error(f"匯入失敗: {e}")
 
     if not df.empty:
         st.markdown("### 📝 編輯紀錄")
