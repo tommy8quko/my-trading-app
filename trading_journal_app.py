@@ -367,17 +367,20 @@ with t5:
 
         st.divider()
         
-        # 3. 危險操作區
-        st.markdown("### ⚠️ 危險操作")
-        if st.button("🧹 清空所有歷史數據", type="primary", use_container_width=True):
-            # 建立空的 DataFrame
-            empty_df = pd.DataFrame(columns=[
-                "Date", "Symbol", "Action", "Strategy", "Price", "Quantity", 
-                "Stop_Loss", "Fees", "Emotion", "Risk_Reward", "Notes", "Img", "Timestamp"
-            ])
-            save_all_data(empty_df)
-            st.error("💥 所有交易紀錄已清空！")
-            time.sleep(0.5)
-            st.rerun()
+        # 3. 數據重設區 (取代 Terrifying Button)
+        st.markdown("### ⚙️ 數據重設")
+        confirm_reset = st.checkbox("我確定要清空所有交易歷史紀錄 (此操作不可撤銷)")
+        
+        if confirm_reset:
+            if st.button("執行清空所有數據", use_container_width=True):
+                # 建立空的 DataFrame
+                empty_df = pd.DataFrame(columns=[
+                    "Date", "Symbol", "Action", "Strategy", "Price", "Quantity", 
+                    "Stop_Loss", "Fees", "Emotion", "Risk_Reward", "Notes", "Img", "Timestamp"
+                ])
+                save_all_data(empty_df)
+                st.error("💥 所有交易紀錄已清空！")
+                time.sleep(0.5)
+                st.rerun()
     else:
         st.info("目前沒有數據可管理。")
