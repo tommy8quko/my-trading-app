@@ -235,21 +235,29 @@ with t5:
     st.subheader("🛠️ 數據管理與批量上傳")
     
     # --- 批量上傳功能 ---
-    with st.expander("📤 Excel 批量上傳交易紀錄"):
-        st.write("請確保 Excel 欄位名稱如下：")
+    with st.expander("📤 批量上傳交易紀錄"):
+        st.write("請確保 CSV/Excel 欄位名稱如下：")
         st.code("Date, Symbol, Action, Strategy, Price, Quantity, Stop_Loss, Emotion, Risk_Reward, Notes")
         
-        # 範例下載
+        # 範例下載 (改為 CSV 格式以避免 xlsxwriter 依賴錯誤)
         template = pd.DataFrame(columns=["Date", "Symbol", "Action", "Strategy", "Price", "Quantity", "Stop_Loss", "Emotion", "Risk_Reward", "Notes"])
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            template.to_excel(writer, index=False)
-        st.download_button("📥 下載 Excel 範本", output.getvalue(), "trade_template.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        csv_template = template.to_csv(index=False).encode('utf-8-sig')
         
-        uploaded_file = st.file_uploader("選擇 Excel 文件", type=["xlsx"])
+        st.download_button(
+            label="📥 下載 CSV 範本 (推薦)",
+            data=csv_template,
+            file_name="trade_template.csv",
+            mime="text/csv"
+        )
+        
+        uploaded_file = st.file_uploader("選擇交易文件 (CSV 或 Excel)", type=["xlsx", "csv"])
         if uploaded_file:
             try:
-                new_trades = pd.read_excel(uploaded_file)
+                if uploaded_file.name.endswith('.csv'):
+                    new_trades = pd.read_csv(uploaded_file)
+                else:
+                    new_trades = pd.read_excel(uploaded_file)
+                
                 # 自動補齊數據
                 if 'Timestamp' not in new_trades.columns:
                     new_trades['Timestamp'] = int(time.time())
@@ -257,7 +265,7 @@ with t5:
                     new_trades['Fees'] = 0
                 
                 # 代號轉換邏輯
-                new_trades['Symbol'] = new_trades['Symbol'].apply(lambda s: str(s).upper().zfill(4) + ".HK" if str(s).isdigit() else str(s).upper())
+                new_trades['Symbol'] = new_trades['Symbol'].apply(lambda s: str(s).upper().strip().zfill(4) + ".HK" if str(s).strip().isdigit() else str(s).upper().strip())
                 new_trades['Date'] = pd.to_datetime(new_trades['Date']).dt.strftime('%Y-%m-%d')
                 
                 if st.button("🚀 確認上傳並合併數據"):
@@ -267,7 +275,7 @@ with t5:
                     time.sleep(1)
                     st.rerun()
             except Exception as e:
-                st.error(f"解析失敗：{e}")
+                st.error(f"解析失敗，請檢查欄位格式。錯誤詳情：{e}")
 
     st.divider()
     if not df.empty:
