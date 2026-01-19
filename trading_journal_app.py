@@ -20,7 +20,7 @@ def init_csv():
     if not os.path.exists(FILE_NAME):
         df = pd.DataFrame(columns=[
             "Date", "Symbol", "Action", "Strategy", "Price", "Quantity", 
-            "Fees", "Emotion", "Risk_Reward", "Notes", "Img", "Timestamp"
+            "Stop_Loss", "Fees", "Emotion", "Risk_Reward", "Notes", "Img", "Timestamp"
         ])
         df.to_csv(FILE_NAME, index=False)
 
@@ -29,7 +29,9 @@ init_csv()
 def load_data():
     try:
         df = pd.read_csv(FILE_NAME)
-        df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
+        # 確保日期格式正確
+        if not df.empty:
+            df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
         return df
     except:
         return pd.DataFrame()
@@ -69,15 +71,17 @@ def calculate_portfolio(df):
             curr['qty'] = new_qty
         elif "賣出 Sell" in action:
             if curr['qty'] > 0:
-                trade_pnl = (price - curr['avg_price']) * qty
+                # 這裡處理部分平倉或全平
+                sell_qty = min(qty, curr['qty'])
+                trade_pnl = (price - curr['avg_price']) * sell_qty
                 total_realized_pnl += trade_pnl
-                curr['qty'] -= qty
+                curr['qty'] -= sell_qty
                 running_pnl += trade_pnl
                 equity_curve.append({"Date": date, "Cumulative PnL": running_pnl})
                 trade_history.append({
                     "Date": date, "Symbol": sym, "Strategy": row['Strategy'],
                     "Action": action, "Price": price, "Cost": curr['avg_price'],
-                    "Qty": qty, "PnL": trade_pnl, "Emotion": row.get('Emotion', '平靜')
+                    "Qty": sell_qty, "PnL": trade_pnl, "Emotion": row.get('Emotion', '平靜')
                 })
 
     active_positions = {k: v for k, v in positions.items() if v['qty'] > 0}
@@ -136,22 +140,59 @@ with st.sidebar:
         s_in = s_raw.zfill(4) + ".HK" if s_raw.isdigit() else s_raw
         
         act_in = st.radio("動作", ["買入 Buy", "賣出 Sell"], horizontal=True)
-        c1, c2 = st.columns(2)
-        q_in = c1.number_input("股數", min_value=0.01)
-        p_in = c2.number_input("價格", min_value=0.0)
+        
+        col1, col2 = st.columns(2)
+        # 設定預設值為 0.0，且不預填數字以方便手機輸入
+        q_in = col1.number_input("股數", min_value=0.0, step=1.0, value=0.0)
+        p_in = col2.number_input("成交價格", min_value=0.0, step=0.01, value=0.0)
+        
+        # 新增停損欄位
+        sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.01, value=0.0)
         
         st.divider()
         emo_in = st.select_slider("心理狀態", options=["恐慌", "猶豫", "平靜", "自信", "衝動"], value="平靜")
-        rr_in = st.number_input("R:R (風險回報比)", value=2.0)
-        strat_in = st.selectbox("策略", ["動量突破", "均線拉回", "新聞驅動", "自訂..."])
-        if strat_in == "自訂...": strat_in = st.text_input("輸入策略名稱")
+        rr_in = st.number_input("預期盈虧比 (R:R)", value=2.0, min_value=0.1)
+        
+        # 動態計算風險提示
+        if p_in > 0 and sl_in > 0 and act_in == "買入 Buy":
+            risk = p_in - sl_in
+            if risk > 0:
+                target = p_in + (risk * rr_in)
+                st.caption(f"💡 風險: {risk:.2f} | 目標價: {target:.2f}")
+            else:
+                st.caption("⚠️ 停損價應低於成交價")
+
+        tags = list(set(["動量突破", "均線拉回", "新聞驅動"] + (df['Strategy'].unique().tolist() if not df.empty else [])))
+        st_in = st.selectbox("策略", tags + ["➕ 新增..."])
+        if st_in == "➕ 新增...": st_in = st.text_input("輸入新策略名稱")
         
         note_in = st.text_area("決策筆記 (市場條件紀錄)")
         
-        if st.form_submit_button("執行"):
-            if s_in and q_in > 0:
-                save_transaction({"Date": d_in.strftime('%Y-%m-%d'), "Symbol": s_in, "Action": act_in, "Strategy": strat_in, "Price": p_in, "Quantity": q_in, "Fees": 0, "Emotion": emo_in, "Risk_Reward": rr_in, "Notes": note_in, "Timestamp": int(time.time())})
-                st.success(f"已儲存 {s_in}")
+        if st.form_submit_button("儲存執行紀錄"):
+            # 嚴格檢查：股數與價格必須大於 0
+            if not s_in:
+                st.error("請輸入標代號")
+            elif q_in <= 0:
+                st.error("股數必須大於 0")
+            elif p_in <= 0:
+                st.error("價格必須大於 0")
+            else:
+                save_transaction({
+                    "Date": d_in.strftime('%Y-%m-%d'), 
+                    "Symbol": s_in, 
+                    "Action": act_in, 
+                    "Strategy": st_in, 
+                    "Price": p_in, 
+                    "Quantity": q_in, 
+                    "Stop_Loss": sl_in,
+                    "Fees": 0, 
+                    "Emotion": emo_in, 
+                    "Risk_Reward": rr_in, 
+                    "Notes": note_in, 
+                    "Timestamp": int(time.time())
+                })
+                st.success(f"✅ 已儲存 {s_in}")
+                time.sleep(1)
                 st.rerun()
 
 # 主畫面 Tab
@@ -165,17 +206,16 @@ with t1:
     col3.metric("平均 R:R", f"{df['Risk_Reward'].mean():.2f}" if not df.empty else "0")
     
     if not equity_df.empty:
-        # 計算 Max Drawdown
         equity_df['Peak'] = equity_df['Cumulative PnL'].cummax()
         equity_df['Drawdown'] = equity_df['Cumulative PnL'] - equity_df['Peak']
         
-        fig_equity = px.area(equity_df, x="Date", y="Cumulative PnL", title="帳戶權益成長曲線", color_discrete_sequence=['#00CC96'])
+        fig_equity = px.area(equity_df, x="Date", y="Cumulative PnL", title="帳戶權益成長曲線 (Equity)", color_discrete_sequence=['#00CC96'])
         st.plotly_chart(fig_equity, use_container_width=True)
         
         fig_dd = px.line(equity_df, x="Date", y="Drawdown", title="風險回撤圖 (Drawdown)", color_discrete_sequence=['#EF553B'])
         st.plotly_chart(fig_dd, use_container_width=True)
 
-    if st.button("🤖 獲取 AI 專業分析"):
+    if st.button("🤖 獲取 AI 專業分析", use_container_width=True):
         with st.spinner("分析中..."):
             st.info(fetch_ai_insight(f"PnL:{realized_pnl}, 勝率:{win_r}%", str(list(active_pos.keys()))))
 
@@ -186,9 +226,21 @@ with t2:
         for s, d in active_pos.items():
             now = prices.get(s)
             un_pnl = (now - d['avg_price']) * d['qty'] if now else 0
-            p_data.append({"代號": s, "股數": d['qty'], "成本": f"${d['avg_price']:.2f}", "現價": f"${now:.2f}" if now else "Loding...", "未實現": f"${un_pnl:,.2f}", "回報%": f"{(un_pnl/(d['qty']*d['avg_price'])*100):.1f}%" if now else "0%"})
-        st.table(pd.DataFrame(p_data))
-    else: st.info("目前無持倉")
+            # 找該標的最近一次輸入的停損價
+            last_sl = df[df['Symbol'] == s]['Stop_Loss'].iloc[-1] if s in df['Symbol'].values else 0
+            
+            p_data.append({
+                "代號": s, 
+                "股數": d['qty'], 
+                "成本": f"${d['avg_price']:.2f}", 
+                "停損價": f"${last_sl:.2f}",
+                "現價": f"${now:.2f}" if now else "讀取中...", 
+                "未實現": f"${un_pnl:,.2f}", 
+                "報酬%": f"{(un_pnl/(d['qty']*d['avg_price'])*100):.1f}%" if now and d['avg_price']!=0 else "0%"
+            })
+        st.dataframe(pd.DataFrame(p_data), use_container_width=True, hide_index=True)
+        if st.button("🔄 刷新即時報價"): st.cache_data.clear(); st.rerun()
+    else: st.info("目前無持倉部位")
 
 with t3:
     st.subheader("⏪ 市場環境重播 (Market Replay)")
@@ -199,10 +251,12 @@ with t3:
         if fig_replay:
             c1, c2 = st.columns([3, 1])
             c1.plotly_chart(fig_replay, use_container_width=True)
+            c2.write(f"**執行價格：** ${row['Price']}")
+            c2.write(f"**設定停損：** ${row['Stop_Loss']}")
+            c2.write(f"**心理狀態：** {row['Emotion']}")
             c2.write("**當時筆記：**")
             c2.caption(row['Notes'])
-            c2.write(f"**心理狀態：** {row['Emotion']}")
-        else: st.warning("無法載入該時間段行情。")
+        else: st.warning("無法載入該時間段行情，請檢查代號是否正確。")
 
 with t4:
     c1, c2 = st.columns([1, 2])
@@ -211,5 +265,5 @@ with t4:
             emo_fig = px.pie(df, names="Emotion", title="交易情緒分佈")
             st.plotly_chart(emo_fig, use_container_width=True)
     with c2:
-        st.subheader("📜 歷史流水帳")
-        st.dataframe(df.sort_values("Timestamp", ascending=False), use_container_width=True)
+        st.subheader("📜 完整歷史流水帳")
+        st.dataframe(df.sort_values("Timestamp", ascending=False), use_container_width=True, hide_index=True)
