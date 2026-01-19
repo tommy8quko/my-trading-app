@@ -145,11 +145,11 @@ with st.sidebar:
         """, unsafe_allow_html=True)
         
         col1, col2 = st.columns(2)
-        # 2. 清空預設值 (使用 value=0.0 但不 pre-input 具體值)
-        q_in = col1.number_input("股數 (Qty)", min_value=0.0, step=1.0, value=0.0)
-        p_in = col2.number_input("成交價格 (Price)", min_value=0.0, step=0.01, value=0.0)
+        # 2. 清空預設值 (將原本的 0.0 改為 None)
+        q_in = col1.number_input("股數 (Qty)", min_value=0.0, step=1.0, value=None)
+        p_in = col2.number_input("成交價格 (Price)", min_value=0.0, step=0.01, value=None)
         
-        sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.01, value=0.0, help="賣出時若不輸入，將沿用上次紀錄")
+        sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.01, value=None, help="賣出時若不輸入，將沿用上次紀錄")
         
         st.divider()
         emo_in = st.select_slider("心理狀態", options=["恐慌", "猶豫", "平靜", "自信", "衝動"], value="平靜")
@@ -164,7 +164,7 @@ with st.sidebar:
         note_in = st.text_area("決策筆記")
         
         if st.form_submit_button("儲存執行紀錄"):
-            if not s_in or q_in <= 0 or p_in <= 0:
+            if not s_in or q_in is None or p_in is None or q_in <= 0 or p_in <= 0:
                 st.error("請完整填寫代號、股數與價格")
             else:
                 save_transaction({
@@ -174,7 +174,7 @@ with st.sidebar:
                     "Strategy": st_in, 
                     "Price": p_in, 
                     "Quantity": q_in, 
-                    "Stop_Loss": sl_in,
+                    "Stop_Loss": sl_in if sl_in is not None else 0,
                     "Fees": 0, 
                     "Emotion": emo_in, 
                     "Risk_Reward": rr_in, 
