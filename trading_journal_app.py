@@ -82,7 +82,6 @@ def calculate_portfolio(df):
         curr = positions[sym]
         if sl > 0: curr['last_sl'] = sl
         
-        # 這裡的邏輯包含原有的字串識別
         if "買入 Buy" in action:
             total_cost = (curr['qty'] * curr['avg_price']) + (qty * price)
             new_qty = curr['qty'] + qty
@@ -132,7 +131,8 @@ def get_live_prices(symbols_list):
 
 # --- 4. UI 介面 ---
 df = load_data()
-active_pos, realized_pnl_hkd, completed_trades_df, equity_df = calculate_portfolio(df)
+# 計算全局持倉（不論時間範圍，持倉是連續的）
+active_pos, _, _, _ = calculate_portfolio(df)
 
 with st.sidebar:
     st.header("⚡ 執行面板")
@@ -173,7 +173,57 @@ with st.sidebar:
 
 t1, t2, t3, t4, t5 = st.tabs(["📈 績效矩陣", "🔥 持倉 & 報價", "🔄 交易重播", "🧠 心理 & 歷史", "🛠️ 數據管理"])
 
-# 獲取報價與計算風險
+with t1:
+    st.subheader("📊 績效概覽")
+    
+    # --- 統計時間範圍選擇器 ---
+    time_frame = st.selectbox(
+        "選擇統計時間範圍 (Time Frame)", 
+        ["全部記錄 (All Time)", "今年 (This Year)", "本月 (This Month)", "最近 30 天 (Last 30 Days)"],
+        index=0
+    )
+    
+    # 過濾數據
+    filtered_df = df.copy()
+    if not filtered_df.empty:
+        filtered_df['Date_DT'] = pd.to_datetime(filtered_df['Date'])
+        today = datetime.now()
+        
+        if time_frame == "今年 (This Year)":
+            filtered_df = filtered_df[filtered_df['Date_DT'].dt.year == today.year]
+        elif time_frame == "本月 (This Month)":
+            filtered_df = filtered_df[(filtered_df['Date_DT'].dt.year == today.year) & (filtered_df['Date_DT'].dt.month == today.month)]
+        elif time_frame == "最近 30 天 (Last 30 Days)":
+            start_date = today - timedelta(days=30)
+            filtered_df = filtered_df[filtered_df['Date_DT'] >= start_date]
+            
+    # 基於過濾後的數據計算績效
+    _, realized_pnl_hkd, completed_trades_df, equity_df = calculate_portfolio(filtered_df)
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("已實現損益 (HKD)", f"${realized_pnl_hkd:,.2f}")
+    
+    if not completed_trades_df.empty:
+        wins = len(completed_trades_df[completed_trades_df['TotalPnL_HKD'] > 0])
+        total_trades = len(completed_trades_df)
+        win_r = (wins / total_trades * 100)
+    else: 
+        win_r = 0.0
+        total_trades = 0
+        
+    col2.metric("勝率 (歸零計次)", f"{win_r:.1f}%", help=f"統計範圍內總結清次數: {total_trades}")
+    col3.metric("平均 R:R", f"{filtered_df['Risk_Reward'].mean():.2f}" if not filtered_df.empty else "0")
+    
+    # 計算過濾後的風險 (此處風險計算仍以目前持倉為準，但顯示在過濾後的面板)
+    # 註：風險是即時的，不受時間範圍過濾影響，但為了 UI 一致性放於此
+    col4.metric("策略多樣性", f"{len(filtered_df['Strategy'].unique()) if not filtered_df.empty else 0}")
+
+    if not equity_df.empty:
+        st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", title=f"權益成長曲線 - {time_frame} (HKD)", color_discrete_sequence=['#00CC96']), use_container_width=True)
+    else:
+        st.info(f"所選時間範圍 ({time_frame}) 內尚無結清交易紀錄。")
+
+# 獲取報價與計算即時風險 (始終基於所有持倉)
 current_symbols = list(active_pos.keys())
 live_prices = get_live_prices(current_symbols)
 aggregate_sl_risk_hkd = 0
@@ -194,23 +244,11 @@ if active_pos:
             "停損回撤 (SL Risk)": f"${sl_risk_amt_raw:,.2f}" if now else "N/A"
         })
 
-with t1:
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("已實現損益 (HKD)", f"${realized_pnl_hkd:,.2f}")
-    if not completed_trades_df.empty:
-        wins = len(completed_trades_df[completed_trades_df['TotalPnL_HKD'] > 0])
-        total_trades = len(completed_trades_df)
-        win_r = (wins / total_trades * 100)
-    else: win_r = 0.0; total_trades = 0
-    col2.metric("勝率 (歸零計次)", f"{win_r:.1f}%", help=f"總成交交易數: {total_trades}")
-    col3.metric("平均 R:R", f"{df['Risk_Reward'].mean():.2f}" if not df.empty else "0")
-    col4.metric("總回撤風險 (HKD)", f"${aggregate_sl_risk_hkd:,.2f}", delta_color="inverse")
-    if not equity_df.empty:
-        st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", title="帳戶權益成長曲線 (HKD)", color_discrete_sequence=['#00CC96']), use_container_width=True)
-
 with t2:
+    st.subheader("🟢 目前持倉狀況")
     if active_pos:
         st.dataframe(pd.DataFrame(processed_p_data), use_container_width=True, hide_index=True)
+        st.metric("總持倉回撤風險 (SL Risk HKD)", f"${aggregate_sl_risk_hkd:,.2f}", delta_color="inverse")
         if st.button("🔄 刷新即時報價"): st.cache_data.clear(); st.rerun()
     else: st.info("目前無持倉部位")
 
@@ -229,7 +267,7 @@ with t3:
         except: st.warning("無法載入圖表數據")
 
 with t4:
-    st.subheader("📜 歷史紀錄")
+    st.subheader("📜 歷史紀錄清單")
     st.dataframe(df.sort_values("Timestamp", ascending=False), use_container_width=True, hide_index=True)
 
 with t5:
@@ -261,10 +299,9 @@ with t5:
                     a_str = str(a).upper().strip()
                     if a_str == "B": return "買入 Buy"
                     if a_str == "S": return "賣出 Sell"
-                    return a # 如果原本就是 "買入 Buy" 則保持不變
+                    return a 
                 
                 new_trades['Action'] = new_trades['Action'].apply(map_action)
-                
                 new_trades['Symbol'] = new_trades['Symbol'].apply(lambda s: str(s).upper().strip().zfill(4) + ".HK" if str(s).strip().isdigit() else str(s).upper().strip())
                 new_trades['Date'] = pd.to_datetime(new_trades['Date']).dt.strftime('%Y-%m-%d')
                 
