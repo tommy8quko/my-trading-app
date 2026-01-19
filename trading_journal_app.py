@@ -49,13 +49,12 @@ def save_transaction(data):
     df = pd.concat([df, pd.DataFrame([data])], ignore_index=True)
     save_all_data(df)
 
-# 貨幣轉換輔助函數
 def get_hkd_value(symbol, value):
     if not str(symbol).endswith(".HK"):
         return value * USD_HKD_RATE
     return value
 
-# --- 2. 核心邏輯：計算分批持倉與損益 ---
+# --- 2. 核心邏輯 ---
 def calculate_portfolio(df):
     if df.empty: return {}, 0, pd.DataFrame(), pd.DataFrame()
     
@@ -109,8 +108,7 @@ def calculate_portfolio(df):
     active_positions = {k: v for k, v in positions.items() if v['qty'] > 0.0001}
     return active_positions, total_realized_pnl_hkd, pd.DataFrame(completed_trades), pd.DataFrame(equity_curve)
 
-# --- 3. 即時報價 ---
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def get_live_prices(symbols_list):
     if not symbols_list: return {}
     try:
@@ -131,7 +129,6 @@ def get_live_prices(symbols_list):
 
 # --- 4. UI 介面 ---
 df = load_data()
-# 計算全局持倉（不論時間範圍，持倉是連續的）
 active_pos, _, _, _ = calculate_portfolio(df)
 
 with st.sidebar:
@@ -175,59 +172,33 @@ t1, t2, t3, t4, t5 = st.tabs(["📈 績效矩陣", "🔥 持倉 & 報價", "🔄
 
 with t1:
     st.subheader("📊 績效概覽")
-    
-    # --- 統計時間範圍選擇器 ---
-    time_frame = st.selectbox(
-        "選擇統計時間範圍 (Time Frame)", 
-        ["全部記錄 (All Time)", "今年 (This Year)", "本月 (This Month)", "最近 30 天 (Last 30 Days)"],
-        index=0
-    )
-    
-    # 過濾數據
+    time_frame = st.selectbox("統計時間範圍", ["全部記錄", "今年", "本月", "最近 30 天"], index=0)
     filtered_df = df.copy()
     if not filtered_df.empty:
         filtered_df['Date_DT'] = pd.to_datetime(filtered_df['Date'])
         today = datetime.now()
-        
-        if time_frame == "今年 (This Year)":
-            filtered_df = filtered_df[filtered_df['Date_DT'].dt.year == today.year]
-        elif time_frame == "本月 (This Month)":
-            filtered_df = filtered_df[(filtered_df['Date_DT'].dt.year == today.year) & (filtered_df['Date_DT'].dt.month == today.month)]
-        elif time_frame == "最近 30 天 (Last 30 Days)":
-            start_date = today - timedelta(days=30)
-            filtered_df = filtered_df[filtered_df['Date_DT'] >= start_date]
+        if time_frame == "今年": filtered_df = filtered_df[filtered_df['Date_DT'].dt.year == today.year]
+        elif time_frame == "本月": filtered_df = filtered_df[(filtered_df['Date_DT'].dt.year == today.year) & (filtered_df['Date_DT'].dt.month == today.month)]
+        elif time_frame == "最近 30 天": filtered_df = filtered_df[filtered_df['Date_DT'] >= (today - timedelta(days=30))]
             
-    # 基於過濾後的數據計算績效
     _, realized_pnl_hkd, completed_trades_df, equity_df = calculate_portfolio(filtered_df)
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("已實現損益 (HKD)", f"${realized_pnl_hkd:,.2f}")
-    
-    if not completed_trades_df.empty:
-        wins = len(completed_trades_df[completed_trades_df['TotalPnL_HKD'] > 0])
-        total_trades = len(completed_trades_df)
-        win_r = (wins / total_trades * 100)
-    else: 
-        win_r = 0.0
-        total_trades = 0
-        
-    col2.metric("勝率 (歸零計次)", f"{win_r:.1f}%", help=f"統計範圍內總結清次數: {total_trades}")
+    win_r = (len(completed_trades_df[completed_trades_df['TotalPnL_HKD'] > 0]) / len(completed_trades_df) * 100) if not completed_trades_df.empty else 0
+    col2.metric("勝率", f"{win_r:.1f}%")
     col3.metric("平均 R:R", f"{filtered_df['Risk_Reward'].mean():.2f}" if not filtered_df.empty else "0")
-    
-    # 計算過濾後的風險 (此處風險計算仍以目前持倉為準，但顯示在過濾後的面板)
-    # 註：風險是即時的，不受時間範圍過濾影響，但為了 UI 一致性放於此
-    col4.metric("策略多樣性", f"{len(filtered_df['Strategy'].unique()) if not filtered_df.empty else 0}")
+    col4.metric("策略數", f"{len(filtered_df['Strategy'].unique()) if not filtered_df.empty else 0}")
 
     if not equity_df.empty:
-        st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", title=f"權益成長曲線 - {time_frame} (HKD)", color_discrete_sequence=['#00CC96']), use_container_width=True)
-    else:
-        st.info(f"所選時間範圍 ({time_frame}) 內尚無結清交易紀錄。")
+        st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", height=300), use_container_width=True)
 
-# 獲取報價與計算即時風險 (始終基於所有持倉)
+# 獲取報價與計算即時風險
 current_symbols = list(active_pos.keys())
 live_prices = get_live_prices(current_symbols)
 aggregate_sl_risk_hkd = 0
 processed_p_data = []
+
 if active_pos:
     for s, d in active_pos.items():
         now = live_prices.get(s)
@@ -235,142 +206,96 @@ if active_pos:
         un_pnl_raw = (now - avg_p) * qty if now else 0
         sl_risk_amt_raw = (now - last_sl) * qty if (now and last_sl > 0) else 0
         aggregate_sl_risk_hkd += get_hkd_value(s, sl_risk_amt_raw)
+        
+        # 數據清理供表格使用 (Compact Format)
         processed_p_data.append({
-            "代號": s, "股數": f"{qty:,.0f}", "成本": f"${avg_p:.2f}", 
-            "停損價": f"${last_sl:.2f}" if last_sl > 0 else "未設定", 
-            "現價": f"${now:.2f}" if now else "讀取中...", 
-            "未實現損益": f"${un_pnl_raw:,.2f}", 
-            "報酬%": f"{(un_pnl_raw/(qty * avg_p)*100):.1f}%" if (now and avg_p!=0) else "0%",
-            "停損回撤 (SL Risk)": f"${sl_risk_amt_raw:,.2f}" if now else "N/A"
+            "Ticker": s,
+            "Qty": qty,
+            "Avg": avg_p,
+            "Last": now if now else 0,
+            "SL": last_sl,
+            "PnL": un_pnl_raw,
+            "Return%": (un_pnl_raw/(qty * avg_p)*100) if (now and avg_p!=0) else 0,
+            "SL_Risk": sl_risk_amt_raw if now else 0
         })
 
 with t2:
-    st.subheader("🟢 目前持倉狀況")
-    if active_pos:
-        st.dataframe(pd.DataFrame(processed_p_data), use_container_width=True, hide_index=True)
-        st.metric("總持倉回撤風險 (SL Risk HKD)", f"${aggregate_sl_risk_hkd:,.2f}", delta_color="inverse")
-        if st.button("🔄 刷新即時報價"): st.cache_data.clear(); st.rerun()
-    else: st.info("目前無持倉部位")
+    st.markdown("### 🟢 持倉概覽 (Compact View)")
+    if processed_p_data:
+        p_df = pd.DataFrame(processed_p_data)
+        
+        # 使用 st.column_config 優化顯示，減少寬度並增加可視性
+        st.dataframe(
+            p_df,
+            column_config={
+                "Ticker": st.column_config.TextColumn("代號", width="small"),
+                "Qty": st.column_config.NumberColumn("股數", format="%d", width="small"),
+                "Avg": st.column_config.NumberColumn("成本", format="$%.2f", width="small"),
+                "Last": st.column_config.NumberColumn("現價", format="$%.2f", width="small"),
+                "SL": st.column_config.NumberColumn("停損", format="$%.2f", width="small"),
+                "PnL": st.column_config.NumberColumn("損益", format="$%d", width="medium"),
+                "Return%": st.column_config.ProgressColumn(
+                    "報酬%",
+                    help="未實現報酬率",
+                    format="%.1f%%",
+                    min_value=-20,
+                    max_value=20,
+                ),
+                "SL_Risk": st.column_config.NumberColumn("SL風險", format="$%d", width="small"),
+            },
+            hide_index=True,
+            use_container_width=True,
+            height=min(len(p_df) * 35 + 40, 800) # 動態高度，支撐 30 隻股票約 1000px 以內
+        )
+        
+        col_risk1, col_risk2 = st.columns(2)
+        col_risk1.metric("總持倉回撤風險 (SL Risk HKD)", f"${aggregate_sl_risk_hkd:,.2f}", delta_color="inverse")
+        if st.button("🔄 刷新即時報價", use_container_width=True): st.cache_data.clear(); st.rerun()
+    else:
+        st.info("目前無持倉部位")
 
 with t3:
     st.subheader("⏪ 市場環境重播")
     if not df.empty:
-        target = st.selectbox("選擇回顧交易", df.index, format_func=lambda x: f"[{df.iloc[x]['Date']}] {df.iloc[x]['Symbol']}")
+        target = st.selectbox("選擇交易", df.index, format_func=lambda x: f"[{df.iloc[x]['Date']}] {df.iloc[x]['Symbol']}")
         row = df.iloc[target]
-        try:
-            data = yf.download(row['Symbol'], start=(pd.to_datetime(row['Date']) - timedelta(days=15)).strftime('%Y-%m-%d'), end=(pd.to_datetime(row['Date']) + timedelta(days=15)).strftime('%Y-%m-%d'), progress=False)
-            if not data.empty:
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=data.index, y=data['Close'], name='收盤價'))
-                fig.add_trace(go.Scatter(x=[pd.to_datetime(row['Date'])], y=[row['Price']], mode='markers+text', text=['📍 EXEC'], marker=dict(color='orange', size=12)))
-                st.plotly_chart(fig, use_container_width=True)
-        except: st.warning("無法載入圖表數據")
+        data = yf.download(row['Symbol'], start=(pd.to_datetime(row['Date']) - timedelta(days=15)).strftime('%Y-%m-%d'), end=(pd.to_datetime(row['Date']) + timedelta(days=15)).strftime('%Y-%m-%d'), progress=False)
+        if not data.empty:
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=data.index, y=data['Close'], name='Close'))
+            fig.add_trace(go.Scatter(x=[pd.to_datetime(row['Date'])], y=[row['Price']], mode='markers+text', text=['📍 EXEC'], marker=dict(color='orange', size=12)))
+            st.plotly_chart(fig, use_container_width=True)
 
 with t4:
-    st.subheader("📜 歷史紀錄清單")
+    st.subheader("📜 歷史紀錄")
     st.dataframe(df.sort_values("Timestamp", ascending=False), use_container_width=True, hide_index=True)
 
 with t5:
-    st.subheader("🛠️ 數據管理與批量上傳")
-    
-    # --- 1. 批量上傳功能 ---
-    with st.expander("📤 批量上傳交易紀錄"):
-        st.write("請確保 CSV/Excel 欄位名稱如下：")
-        st.code("Date, Symbol, Action, Strategy, Price, Quantity, Stop_Loss, Emotion, Risk_Reward, Notes")
-        st.info("提示：Action 欄位現在支援填寫 'B' (買入) 或 'S' (賣出)。")
-        
-        template = pd.DataFrame(columns=["Date", "Symbol", "Action", "Strategy", "Price", "Quantity", "Stop_Loss", "Emotion", "Risk_Reward", "Notes"])
-        csv_template = template.to_csv(index=False).encode('utf-8-sig')
-        st.download_button(label="📥 下載 CSV 範本", data=csv_template, file_name="trade_template.csv", mime="text/csv")
-        
-        uploaded_file = st.file_uploader("選擇交易文件 (CSV 或 Excel)", type=["xlsx", "csv"])
-        if uploaded_file:
+    st.subheader("🛠️ 數據管理")
+    with st.expander("📤 批量上傳"):
+        uploaded_file = st.file_uploader("選擇 CSV/Excel", type=["xlsx", "csv"])
+        if uploaded_file and st.button("🚀 確認上傳"):
             try:
-                if uploaded_file.name.endswith('.csv'):
-                    new_trades = pd.read_csv(uploaded_file)
-                else:
-                    new_trades = pd.read_excel(uploaded_file)
-                
-                if 'Timestamp' not in new_trades.columns: new_trades['Timestamp'] = int(time.time())
-                if 'Fees' not in new_trades.columns: new_trades['Fees'] = 0
-                
-                # --- 自動識別 B/S 並轉換為系統格式 ---
-                def map_action(a):
-                    a_str = str(a).upper().strip()
-                    if a_str == "B": return "買入 Buy"
-                    if a_str == "S": return "賣出 Sell"
-                    return a 
-                
-                new_trades['Action'] = new_trades['Action'].apply(map_action)
-                new_trades['Symbol'] = new_trades['Symbol'].apply(lambda s: str(s).upper().strip().zfill(4) + ".HK" if str(s).strip().isdigit() else str(s).upper().strip())
-                new_trades['Date'] = pd.to_datetime(new_trades['Date']).dt.strftime('%Y-%m-%d')
-                
-                if st.button("🚀 確認上傳並合併數據"):
-                    df = pd.concat([df, new_trades], ignore_index=True)
-                    save_all_data(df); st.success(f"已上傳 {len(new_trades)} 筆交易！"); time.sleep(1); st.rerun()
-            except Exception as e:
-                st.error(f"解析失敗：{e}")
+                new_trades = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+                new_trades['Action'] = new_trades['Action'].apply(lambda a: "買入 Buy" if str(a).upper()=="B" else ("賣出 Sell" if str(a).upper()=="S" else a))
+                new_trades['Timestamp'] = int(time.time())
+                df = pd.concat([df, new_trades], ignore_index=True)
+                save_all_data(df); st.success("已完成！"); time.sleep(1); st.rerun()
+            except Exception as e: st.error(f"錯誤: {e}")
 
-    st.divider()
-
-    # --- 2. 原始編輯功能 ---
     if not df.empty:
-        st.markdown("### 📝 編輯/刪除單筆交易")
-        edit_df = df.sort_values("Timestamp", ascending=False)
-        selected_idx = st.selectbox(
-            "選擇要修改的交易紀錄", 
-            edit_df.index, 
-            format_func=lambda x: f"[{df.loc[x, 'Date']}] {df.loc[x, 'Symbol']} - {df.loc[x, 'Action']} (${df.loc[x, 'Price']})"
-        )
-        
-        t_edit = df.loc[selected_idx].copy()
-        
-        col_e1, col_e2, col_e3 = st.columns(3)
-        n_date = col_e1.date_input("修改日期", value=pd.to_datetime(t_edit['Date']))
-        n_price = col_e2.number_input("修改價格", value=float(t_edit['Price']))
-        n_qty = col_e3.number_input("修改股數", value=float(t_edit['Quantity']))
-        
-        col_e4, col_e5, col_e6 = st.columns(3)
-        n_sl = col_e4.number_input("修改停損價", value=float(t_edit['Stop_Loss']))
-        n_strategy = col_e5.text_input("修改策略", value=str(t_edit['Strategy']))
-        
-        emo_options = ["恐慌", "猶豫", "平靜", "自信", "衝動"]
-        current_emo = t_edit['Emotion'] if t_edit['Emotion'] in emo_options else "平靜"
-        n_emotion = col_e6.selectbox("修改心理狀態", emo_options, index=emo_options.index(current_emo))
-        
-        n_notes = st.text_area("修改決策筆記", value=str(t_edit['Notes']))
-        
-        btn_col1, btn_col2, _ = st.columns([1, 1, 2])
-        
-        if btn_col1.button("💾 更新此筆紀錄", use_container_width=True):
-            df.loc[selected_idx, 'Date'] = n_date.strftime('%Y-%m-%d')
-            df.loc[selected_idx, 'Price'] = n_price
-            df.loc[selected_idx, 'Quantity'] = n_qty
-            df.loc[selected_idx, 'Stop_Loss'] = n_sl
-            df.loc[selected_idx, 'Strategy'] = n_strategy
-            df.loc[selected_idx, 'Emotion'] = n_emotion
-            df.loc[selected_idx, 'Notes'] = n_notes
-            save_all_data(df)
-            st.success("✅ 紀錄已更新！")
-            time.sleep(0.5)
-            st.rerun()
+        st.markdown("### 📝 編輯紀錄")
+        selected_idx = st.selectbox("選擇紀錄", df.index, format_func=lambda x: f"{df.loc[x, 'Symbol']} @ {df.loc[x, 'Date']}")
+        t_edit = df.loc[selected_idx]
+        col_e1, col_e2 = st.columns(2)
+        n_p = col_e1.number_input("價格", value=float(t_edit['Price']))
+        n_q = col_e2.number_input("股數", value=float(t_edit['Quantity']))
+        if st.button("💾 更新"):
+            df.loc[selected_idx, 'Price'] = n_p
+            df.loc[selected_idx, 'Quantity'] = n_q
+            save_all_data(df); st.rerun()
             
-        if btn_col2.button("🗑️ 刪除此筆紀錄", use_container_width=True):
-            df = df.drop(selected_idx)
-            save_all_data(df)
-            st.warning("⚠️ 紀錄已刪除。")
-            time.sleep(0.5)
-            st.rerun()
-
         st.divider()
-
-        # --- 3. 危險區域 ---
-        st.markdown("### ⚠️ 危險區域")
-        confirm = st.checkbox("我確定要刪除所有歷史交易紀錄（此操作無法復原）")
-        if st.button("🔥 重置所有數據", disabled=not confirm, type="secondary"):
-            save_all_data(pd.DataFrame(columns=df.columns))
-            st.success("所有數據已清空！")
-            time.sleep(1)
-            st.rerun()
-    else:
-        st.info("尚無數據可供編輯。")
+        confirm = st.checkbox("確認刪除所有數據")
+        if st.button("🔥 清空數據", disabled=not confirm):
+            save_all_data(pd.DataFrame(columns=df.columns)); st.rerun()
