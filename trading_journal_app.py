@@ -173,19 +173,40 @@ with st.sidebar:
 
 t1, t2, t3, t4, t5 = st.tabs(["📈 績效矩陣", "🔥 持倉 & 報價", "🔄 交易重播", "🧠 心理 & 歷史", "🛠️ 數據管理"])
 
-with t1:
-    max_dd = 0
-    if not equity_df.empty:
-        equity_df['Peak'] = equity_df['Cumulative PnL'].cummax()
-        equity_df['Drawdown'] = equity_df['Cumulative PnL'] - equity_df['Peak']
-        max_dd = equity_df['Drawdown'].min()
+# 先獲取當前報價以便計算總回撤風險
+current_symbols = list(active_pos.keys())
+live_prices = get_live_prices(current_symbols)
 
+# 計算各標的 SL Risk 並加總
+aggregate_sl_risk = 0
+processed_p_data = []
+if active_pos:
+    for s, d in active_pos.items():
+        now = live_prices.get(s)
+        qty = d['qty']
+        avg_p = d['avg_price']
+        last_sl = d['last_sl']
+        un_pnl = (now - avg_p) * qty if now else 0
+        sl_risk_amt = (now - last_sl) * qty if (now and last_sl > 0) else 0
+        aggregate_sl_risk += sl_risk_amt
+
+        processed_p_data.append({
+            "代號": s, "股數": f"{qty:,.0f}", "成本": f"${avg_p:.2f}", 
+            "停損價": f"${last_sl:.2f}" if last_sl > 0 else "未設定", 
+            "現價": f"${now:.2f}" if now else "讀取中...", 
+            "未實現損益": f"${un_pnl:,.2f}", 
+            "報酬%": f"{(un_pnl/(qty * avg_p)*100):.1f}%" if (now and avg_p!=0) else "0%",
+            "停損回撤 (SL Risk)": f"${sl_risk_amt:,.2f}" if now else "N/A"
+        })
+
+with t1:
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("已實現損益", f"${realized_pnl:,.2f}")
     win_r = (len(history_df[history_df['PnL']>0])/len(history_df)*100) if not history_df.empty else 0
     col2.metric("勝率", f"{win_r:.1f}%")
     col3.metric("平均 R:R", f"{df['Risk_Reward'].mean():.2f}" if not df.empty else "0")
-    col4.metric("帳戶 MDD", f"${max_dd:,.2f}", delta_color="inverse")
+    # 將 MDD 定義為當前所有持倉的總停損風險金額
+    col4.metric("總回撤風險 (SL Risk)", f"${aggregate_sl_risk:,.2f}", delta_color="inverse", help="當前持倉全部觸發停損時的預期資金回吐總額")
     
     if not equity_df.empty:
         fig_equity = px.area(equity_df, x="Date", y="Cumulative PnL", title="帳戶權益成長曲線", color_discrete_sequence=['#00CC96'])
@@ -193,25 +214,7 @@ with t1:
 
 with t2:
     if active_pos:
-        prices = get_live_prices(list(active_pos.keys()))
-        p_data = []
-        for s, d in active_pos.items():
-            now = prices.get(s)
-            qty = d['qty']
-            avg_p = d['avg_price']
-            last_sl = d['last_sl']
-            un_pnl = (now - avg_p) * qty if now else 0
-            sl_risk_amt = (now - last_sl) * qty if (now and last_sl > 0) else 0
-
-            p_data.append({
-                "代號": s, "股數": f"{qty:,.0f}", "成本": f"${avg_p:.2f}", 
-                "停損價": f"${last_sl:.2f}" if last_sl > 0 else "未設定", 
-                "現價": f"${now:.2f}" if now else "讀取中...", 
-                "未實現損益": f"${un_pnl:,.2f}", 
-                "報酬%": f"{(un_pnl/(qty * avg_p)*100):.1f}%" if (now and avg_p!=0) else "0%",
-                "停損回撤 (SL Risk)": f"${sl_risk_amt:,.2f}" if now else "N/A"
-            })
-        st.dataframe(pd.DataFrame(p_data), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(processed_p_data), use_container_width=True, hide_index=True)
         if st.button("🔄 刷新即時報價"): st.cache_data.clear(); st.rerun()
     else: st.info("目前無持倉部位")
 
