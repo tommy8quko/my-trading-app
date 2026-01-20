@@ -13,7 +13,7 @@ from streamlit_gsheets import GSheetsConnection
 
 # --- 1. 核心配置與初始化 ---
 FILE_NAME = "trade_ledger_v_final.csv"
-USD_HKD_RATE = 7.8 
+USD_HKD_RATE = 7.8
 
 if not os.path.exists("images"):
     os.makedirs("images")
@@ -534,3 +534,4 @@ with t5:
         save_all_data(pd.DataFrame(columns=df.columns))
         st.success("數據已清空")
         st.rerun()
+
