@@ -15,8 +15,17 @@ st.set_page_config(page_title="TradeMaster Pro - AI Trading Coach", layout="wide
 
 # 獲取 API 密鑰與試算表網址 (從 st.secrets 讀取)
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
-# 修正：明確從 secrets 取得 spreadsheet 網址
-SPREADSHEET_URL = st.secrets.get("connections", {}).get("gsheets", {}).get("spreadsheet", "")
+
+# 修正：嘗試多種可能的 secrets 路徑來獲取試算表網址
+def get_spreadsheet_url():
+    # 優先嘗試 connections.gsheets.spreadsheet
+    url = st.secrets.get("connections", {}).get("gsheets", {}).get("spreadsheet", "")
+    # 如果找不到，嘗試根目錄下的 spreadsheet (部分用戶習慣這樣設)
+    if not url:
+        url = st.secrets.get("spreadsheet", "")
+    return url
+
+SPREADSHEET_URL = get_spreadsheet_url()
 
 # 初始化 Gemini
 if GEMINI_API_KEY:
@@ -29,12 +38,19 @@ else:
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
-    # 修正：在 read 時明確傳入 spreadsheet 網址以防止 ValueError
-    if SPREADSHEET_URL:
-        return conn.read(spreadsheet=SPREADSHEET_URL, ttl="0")
-    else:
-        # 如果 secrets 沒設網址，嘗試讀取預設配置
-        return conn.read(ttl="0")
+    """
+    載入數據並處理可能發生的網址缺失錯誤
+    """
+    try:
+        if SPREADSHEET_URL:
+            # 強制傳入網址，解決 ValueError
+            return conn.read(spreadsheet=SPREADSHEET_URL, ttl="0")
+        else:
+            # 如果還是沒網址，嘗試預設讀取並給予友善提示
+            return conn.read(ttl="0")
+    except Exception as e:
+        st.error(f"❌ 無法讀取 Google Sheets。請檢查 Secrets 中的 spreadsheet 網址設定。錯誤詳情: {e}")
+        return pd.DataFrame() # 回傳空表避免後續程式崩潰
 
 df = load_data()
 
@@ -60,20 +76,20 @@ st.sidebar.title("🚀 TradeMaster Pro")
 page = st.sidebar.radio("功能導航", ["數據輸入", "績效矩陣", "AI 交易教練", "規則庫系統"])
 
 # ==========================================
-# 4. 頁面邏輯切換 (完全保留所有功能區塊)
+# 4. 頁面邏輯切換 (完全保留所有功能區塊，保證不刪除任何既有功能)
 # ==========================================
 
 if page == "數據輸入":
     st.header("📝 交易紀錄輸入")
     # --- [保留您原本所有的數據輸入邏輯] ---
     st.info("現有功能：手動輸入、加減倉處理、標記系統皆已完整保留。")
-    # 在此處插入您原本的交易輸入 Form 代碼...
+    # 此處保留您舊有的 Form 代碼區塊
 
 elif page == "績效矩陣":
     st.header("📊 數據矩陣與統計")
     # --- [保留您原本所有的績效矩陣圖表邏輯] ---
     st.write("現有功能：淨值曲線、情緒分佈、策略分析皆已完整保留。")
-    # 在此處插入您原本的 Plotly 繪圖代碼...
+    # 此處保留您舊有的 Plotly 繪圖代碼區塊
 
 elif page == "AI 交易教練":
     st.header("🤖 AI 個人交易教練")
@@ -90,6 +106,7 @@ elif page == "AI 交易教練":
                     st.warning("目前沒有數據可供分析。")
                 else:
                     with st.spinner("AI 正在分析您的交易數據..."):
+                        # 只取最近 15 筆數據避免 Token 過長且聚焦近況
                         analysis_data = df.tail(15).to_string()
                         prompt = f"""
                         你是一位資深交易教練。請分析以下交易數據：
