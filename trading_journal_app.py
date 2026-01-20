@@ -233,11 +233,33 @@ with t3:
     if not df.empty:
         target = st.selectbox("選擇交易", df.index, format_func=lambda x: f"[{df.iloc[x]['Date']}] {df.iloc[x]['Symbol']}")
         row = df.iloc[target]
+        # 下載前後 20 天的數據
         data = yf.download(row['Symbol'], start=(pd.to_datetime(row['Date']) - timedelta(days=20)).strftime('%Y-%m-%d'), progress=False)
+        
         if not data.empty:
-            fig = px.line(data, y='Close', title=f"{row['Symbol']} 執行回顧")
-            fig.add_scatter(x=[pd.to_datetime(row['Date'])], y=[row['Price']], mode='markers', marker=dict(size=15, color='orange'), name='執行點')
-            st.plotly_chart(fig, use_container_width=True)
+            # 處理 yfinance 可能返回的多層索引問題 (Multi-index)
+            if isinstance(data.columns, pd.MultiIndex):
+                data.columns = data.columns.get_level_values(0)
+            
+            # 確保有 'Close' 欄位
+            if 'Close' in data.columns:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=data.index, y=data['Close'], mode='lines', name='收盤價'))
+                fig.add_trace(go.Scatter(
+                    x=[pd.to_datetime(row['Date'])], 
+                    y=[row['Price']], 
+                    mode='markers+text', 
+                    marker=dict(size=12, color='orange', symbol='diamond'),
+                    text=["執行點"],
+                    textposition="top center",
+                    name='執行點'
+                ))
+                fig.update_layout(title=f"{row['Symbol']} 執行回顧", xaxis_title="日期", yaxis_title="價格")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("無法獲取該時段的價格數據 (缺少 Close 欄位)")
+        else:
+            st.error("找不到該代號的歷史行情數據")
 
 with t4:
     st.subheader("📜 歷史紀錄與心理分析")
