@@ -224,16 +224,6 @@ def calculate_portfolio(df):
     # Prepare return values
     comp_df = pd.DataFrame(completed_trades)
     
-    # Add active cycle data back to positions for Tab 2 display
-    # (Since we deleted them from 'positions' if closed, we reconstruct active ones)
-    final_active_pos = {}
-    for sym, tid in active_trade_by_symbol.items():
-        # Re-fetch the current state from cycle_tracker
-        c = cycle_tracker[tid]
-        # Calculate current average price manually or from tracking
-        # For simplicity, we kept it in 'positions' before deletion, let's make sure it's preserved
-        pass # The loop above already handles positions for active items
-    
     # Filter positions to only those still in active_trade_by_symbol
     active_output = {s: p for s, p in positions.items() if s in active_trade_by_symbol}
     # Attach cycle data for Tab 2
@@ -299,7 +289,6 @@ with st.sidebar:
         
         if st.form_submit_button("儲存執行紀錄"):
             if s_in and q_in is not None and p_in is not None:
-                # Change 1: Generate or Look up Trade_ID
                 assigned_tid = "N/A"
                 if not is_sell_toggle: # Buy
                     if s_in in active_pos_temp:
@@ -341,7 +330,6 @@ with t1:
     time_options = ["全部記錄", "本週 (This Week)", "本月 (This Month)", "最近 3個月 (Last 3M)", "今年 (YTD)"]
     time_frame = st.selectbox("統計時間範圍", time_options, index=0)
     
-    # Change 4: Filter Logic applied to completed trades specifically
     filtered_comp = completed_trades_df.copy()
     if not filtered_comp.empty:
         filtered_comp['Entry_DT'] = pd.to_datetime(filtered_comp['Entry_Date'])
@@ -364,13 +352,11 @@ with t1:
         
         filtered_comp = filtered_comp[mask]
 
-    # Metrics based on filtered completed trades
     f_pnl = filtered_comp['PnL_HKD'].sum() if not filtered_comp.empty else 0
     trade_count = len(filtered_comp)
     win_r = (len(filtered_comp[filtered_comp['PnL_HKD'] > 0]) / trade_count * 100) if trade_count > 0 else 0
     f_dur = filtered_comp['Duration_Days'].mean() if not filtered_comp.empty else 0
     
-    # Expectancy
     if not filtered_comp.empty:
         wins = filtered_comp[filtered_comp['PnL_HKD'] > 0]
         losses = filtered_comp[filtered_comp['PnL_HKD'] <= 0]
@@ -429,7 +415,6 @@ with t2:
         un_pnl = (now - avg_p) * qty if now else 0
         roi = (un_pnl / (qty * avg_p) * 100) if (now and avg_p != 0) else 0
         
-        # Change 3: Metrics based on Entry-based initial risk
         init_risk = abs(entry_p - entry_sl) * qty if entry_sl > 0 else 0
         curr_risk = (now - last_sl) * qty if (now and last_sl > 0) else 0
         curr_r = (un_pnl / init_risk) if (now and init_risk > 0) else 0
@@ -541,5 +526,11 @@ with t5:
             df = df.drop(selected_idx).reset_index(drop=True)
             save_all_data(df); st.rerun()
 
-    if st.button("🚨 清空所有數據"):
-        save_all_data(pd.DataFrame(columns=df.columns)); st.rerun()
+    st.divider()
+    st.markdown("#### 🚨 危險區域")
+    # Added safety check for data deletion
+    confirm_delete = st.checkbox("我了解此操作將永久刪除所有交易紀錄且無法復原")
+    if st.button("🚨 清空所有數據", type="primary", disabled=not confirm_delete, use_container_width=True):
+        save_all_data(pd.DataFrame(columns=df.columns))
+        st.success("數據已清空")
+        st.rerun()
