@@ -8,6 +8,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import io
+# 新增 Google Sheets 連線庫
+from streamlit_gsheets import GSheetsConnection
 
 # --- 1. 核心配置與初始化 ---
 FILE_NAME = "trade_ledger_v_final.csv"
@@ -18,7 +20,16 @@ if not os.path.exists("images"):
 
 st.set_page_config(page_title="TradeMaster Pro UI", layout="wide")
 
+# --- 改進部分：資料讀取層 (支援 Google Sheets 與 CSV 雙模式) ---
+def get_data_connection():
+    # 嘗試建立 Google Sheets 連線，如果失敗則返回 None
+    try:
+        return st.connection("gsheets", type=GSheetsConnection)
+    except:
+        return None
+
 def init_csv():
+    # 如果使用 CSV 模式，確保檔案存在
     if not os.path.exists(FILE_NAME):
         df = pd.DataFrame(columns=[
             "Date", "Symbol", "Action", "Strategy", "Price", "Quantity", 
@@ -26,8 +37,6 @@ def init_csv():
             "Market_Condition", "Mistake_Tag" 
         ])
         df.to_csv(FILE_NAME, index=False)
-
-init_csv()
 
 def format_symbol(s_raw):
     if pd.isna(s_raw): return ""
@@ -43,27 +52,52 @@ def clean_strategy(s):
     return s_str
 
 def load_data():
+    conn = get_data_connection()
+    df = pd.DataFrame()
+    
+    # 優先嘗試從 Google Sheets 讀取
     try:
-        df = pd.read_csv(FILE_NAME)
-        if df.empty: return df
-        if 'Symbol' in df.columns: df['Symbol'] = df['Symbol'].apply(format_symbol)
-        if 'Strategy' in df.columns: df['Strategy'] = df['Strategy'].apply(clean_strategy)
-        for col in ["Market_Condition", "Mistake_Tag", "Img"]:
-            if col not in df.columns: df[col] = "N/A" if col != "Img" else None
-        if 'Timestamp' not in df.columns:
-            df['Timestamp'] = pd.to_datetime(df['Date'], errors='coerce').view('int64') // 10**9
-            save_all_data(df)
-        df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
-        df['Price'] = pd.to_numeric(df['Price'], errors='coerce')
-        df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce')
-        df['Stop_Loss'] = pd.to_numeric(df['Stop_Loss'], errors='coerce').fillna(0)
-        df['Timestamp'] = pd.to_numeric(df['Timestamp'], errors='coerce')
-        return df
+        if conn:
+            df = conn.read(worksheet="Log", ttl=0) # ttl=0 確保不快取舊數據
+        else:
+            raise Exception("No connection")
     except:
-        return pd.DataFrame()
+        # 降級使用本地 CSV
+        init_csv()
+        try:
+            df = pd.read_csv(FILE_NAME)
+        except:
+            return pd.DataFrame()
+
+    if df.empty: return df
+    
+    # 數據類型轉換 (保持原邏輯)
+    if 'Symbol' in df.columns: df['Symbol'] = df['Symbol'].apply(format_symbol)
+    if 'Strategy' in df.columns: df['Strategy'] = df['Strategy'].apply(clean_strategy)
+    for col in ["Market_Condition", "Mistake_Tag", "Img"]:
+        if col not in df.columns: df[col] = "N/A" if col != "Img" else None
+    if 'Timestamp' not in df.columns:
+        df['Timestamp'] = pd.to_datetime(df['Date'], errors='coerce').view('int64') // 10**9
+        save_all_data(df)
+    
+    df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
+    df['Price'] = pd.to_numeric(df['Price'], errors='coerce')
+    df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce')
+    df['Stop_Loss'] = pd.to_numeric(df['Stop_Loss'], errors='coerce').fillna(0)
+    df['Timestamp'] = pd.to_numeric(df['Timestamp'], errors='coerce')
+    return df
 
 def save_all_data(df):
-    df.to_csv(FILE_NAME, index=False)
+    conn = get_data_connection()
+    try:
+        # 優先嘗試儲存到 Google Sheets
+        if conn:
+            conn.update(worksheet="Log", data=df)
+        else:
+            raise Exception("No connection")
+    except:
+        # 降級儲存到本地 CSV
+        df.to_csv(FILE_NAME, index=False)
 
 def save_transaction(data):
     df = load_data()
@@ -78,11 +112,13 @@ def get_currency_symbol(symbol):
     if isinstance(symbol, str) and ".HK" in symbol.upper(): return "HK$"
     return "$"
 
-# --- 2. 核心計算邏輯 (Updated for Metrics) ---
+# --- 2. 核心計算邏輯 (改進：添加 Cache 以提升效能) ---
+@st.cache_data(ttl=60) # 加入 Cache，當 df 沒變時不會重複運算
 def calculate_portfolio(df):
     if df.empty: return {}, 0, pd.DataFrame(), pd.DataFrame(), 0, 0, 0
     
     positions = {} 
+    # 確保按時間排序
     df = df.sort_values(by="Timestamp")
     total_realized_pnl_hkd = 0
     running_pnl_hkd = 0
@@ -239,7 +275,8 @@ with st.sidebar:
             if s_in and q_in is not None and p_in is not None:
                 img_path = None
                 if img_file is not None:
-                    # Save image locally
+                    # Save image locally (Note: Will be lost on Cloud restart)
+                    if not os.path.exists("images"): os.makedirs("images")
                     ts_str = str(int(time.time()))
                     img_path = os.path.join("images", f"{ts_str}_{img_file.name}")
                     with open(img_path, "wb") as f:
@@ -422,6 +459,14 @@ with t4:
 
 with t5:
     st.subheader("🛠️ 數據管理")
+    
+    # 提示目前的數據來源狀態
+    conn_status = get_data_connection()
+    if conn_status:
+        st.success("🟢 已連接至 Google Sheets (雲端同步中)")
+    else:
+        st.warning("🟠 目前使用本地 CSV 模式 (雲端部署時數據將無法永久保存，請配置 secrets)")
+
     col_u1, col_u2 = st.columns([2, 1])
     with col_u1:
         uploaded_file = st.file_uploader("📤 批量上傳 CSV/Excel", type=["csv", "xlsx"])
