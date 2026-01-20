@@ -22,18 +22,26 @@ def init_csv():
     if not os.path.exists(FILE_NAME):
         df = pd.DataFrame(columns=[
             "Date", "Symbol", "Action", "Strategy", "Price", "Quantity", 
-            "Stop_Loss", "Fees", "Emotion", "Risk_Reward", "Notes", "Img", "Timestamp"
+            "Stop_Loss", "Fees", "Emotion", "Risk_Reward", "Notes", "Img", "Timestamp",
+            "Market_Condition", "Mistake_Tag" # 新增欄位
         ])
         df.to_csv(FILE_NAME, index=False)
 
 init_csv()
 
 def format_symbol(s_raw):
-    """ 統一處理代號格式，確保港股自動補齊 .HK """
+    """ 統一處理代號格式 """
     if pd.isna(s_raw): return ""
     s_str = str(s_raw).upper().strip()
     if s_str.isdigit() and len(s_str) <= 5:
         return s_str.zfill(4) + ".HK"
+    return s_str
+
+def clean_strategy(s):
+    """ 統一策略名稱 """
+    s_str = str(s).strip()
+    if "PULLBACK" in s_str.upper(): return "Pullback"
+    if "BREAKOUT" in s_str.upper() or "BREAK OUT" in s_str.upper(): return "Breakout"
     return s_str
 
 def load_data():
@@ -41,8 +49,18 @@ def load_data():
         df = pd.read_csv(FILE_NAME)
         if df.empty:
             return df
+        
+        # 數據清理與格式統一
         if 'Symbol' in df.columns:
             df['Symbol'] = df['Symbol'].apply(format_symbol)
+        if 'Strategy' in df.columns:
+            df['Strategy'] = df['Strategy'].apply(clean_strategy)
+            
+        # 確保新增欄位存在
+        for col in ["Market_Condition", "Mistake_Tag"]:
+            if col not in df.columns:
+                df[col] = "N/A"
+
         if 'Timestamp' not in df.columns:
             df['Timestamp'] = pd.to_datetime(df['Date'], errors='coerce').view('int64') // 10**9
             df['Timestamp'] = df['Timestamp'].replace(-9223372036, int(time.time()))
@@ -66,20 +84,18 @@ def save_transaction(data):
     save_all_data(df)
 
 def get_hkd_value(symbol, value):
-    """ 貨幣轉換邏輯 """
     if isinstance(symbol, str) and ".HK" in symbol.upper():
         return value
     return value * USD_HKD_RATE
 
 def get_currency_symbol(symbol):
-    """ 獲取顯示用的貨幣符號 """
     if isinstance(symbol, str) and ".HK" in symbol.upper():
         return "HK$"
     return "$"
 
 # --- 2. 核心邏輯 ---
 def calculate_portfolio(df):
-    if df.empty: return {}, 0, pd.DataFrame(), pd.DataFrame()
+    if df.empty: return {}, 0, pd.DataFrame(), pd.DataFrame(), 0, 0
     
     positions = {} 
     df = df.sort_values(by="Timestamp")
@@ -99,12 +115,13 @@ def calculate_portfolio(df):
         price = float(row['Price']) if pd.notnull(row['Price']) else 0.0
         sl = float(row['Stop_Loss']) if pd.notnull(row['Stop_Loss']) else 0.0
         date = row['Date']
+        ts = row['Timestamp']
         
         if sym not in positions:
             positions[sym] = {'qty': 0.0, 'avg_price': 0.0, 'last_sl': 0.0}
         
         if sym not in cycle_tracker:
-            cycle_tracker[sym] = {'cash_flow_raw': 0.0, 'start_date': date, 'is_active': False}
+            cycle_tracker[sym] = {'cash_flow_raw': 0.0, 'start_date': date, 'start_ts': ts, 'is_active': False}
             
         curr = positions[sym]
         if sl > 0: curr['last_sl'] = sl
@@ -112,6 +129,7 @@ def calculate_portfolio(df):
         if not cycle_tracker[sym]['is_active'] and qty > 0:
             cycle_tracker[sym]['is_active'] = True
             cycle_tracker[sym]['start_date'] = date
+            cycle_tracker[sym]['start_ts'] = ts
             cycle_tracker[sym]['cash_flow_raw'] = 0.0
 
         is_buy = any(word in action.upper() for word in ["買入", "BUY", "B"])
@@ -138,18 +156,36 @@ def calculate_portfolio(df):
                 curr['qty'] -= sell_qty
                 
                 if curr['qty'] < 0.0001:
+                    duration_days = (ts - cycle_tracker[sym]['start_ts']) / 86400
                     completed_trades.append({
                         "Exit_Date": date,
                         "Entry_Date": cycle_tracker[sym]['start_date'],
                         "Symbol": sym, 
-                        "PnL_Raw": cycle_tracker[sym]['cash_flow_raw']
+                        "PnL_Raw": cycle_tracker[sym]['cash_flow_raw'],
+                        "PnL_HKD": get_hkd_value(sym, cycle_tracker[sym]['cash_flow_raw']),
+                        "Duration_Days": duration_days
                     })
                     cycle_tracker[sym]['is_active'] = False
                 
                 equity_curve.append({"Date": date, "Cumulative PnL": running_pnl_hkd})
 
+    completed_df = pd.DataFrame(completed_trades)
+    
+    # 計算 Expectancy 與 平均持倉時間
+    expectancy = 0
+    avg_duration = 0
+    if not completed_df.empty:
+        wins = completed_df[completed_df['PnL_HKD'] > 0]
+        losses = completed_df[completed_df['PnL_HKD'] <= 0]
+        win_rate = len(wins) / len(completed_df)
+        loss_rate = 1 - win_rate
+        avg_win = wins['PnL_HKD'].mean() if not wins.empty else 0
+        avg_loss = abs(losses['PnL_HKD'].mean()) if not losses.empty else 0
+        expectancy = (win_rate * avg_win) - (loss_rate * avg_loss)
+        avg_duration = completed_df['Duration_Days'].mean()
+
     active_positions = {k: v for k, v in positions.items() if v['qty'] > 0.0001}
-    return active_positions, total_realized_pnl_hkd, pd.DataFrame(completed_trades), pd.DataFrame(equity_curve)
+    return active_positions, total_realized_pnl_hkd, completed_df, pd.DataFrame(equity_curve), expectancy, avg_duration
 
 @st.cache_data(ttl=60)
 def get_live_prices(symbols_list):
@@ -172,7 +208,7 @@ def get_live_prices(symbols_list):
 
 # --- 4. UI 介面 ---
 df = load_data()
-active_pos, realized_pnl_total_hkd, completed_trades_df, equity_df = calculate_portfolio(df)
+active_pos, realized_pnl_total_hkd, completed_trades_df, equity_df, expectancy_val, avg_dur_val = calculate_portfolio(df)
 
 with st.sidebar:
     st.header("⚡ 執行面板")
@@ -182,30 +218,39 @@ with st.sidebar:
         s_in = format_symbol(s_raw) 
         is_sell = st.toggle("Buy 🟢 / Sell 🔴", value=False)
         act_in = "賣出 Sell" if is_sell else "買入 Buy"
-        toggle_color = "#EF553B" if is_sell else "#00CC96"
-        st.markdown(f"<style>div[data-testid='stCheckboxToggle'] div[data-baseweb='checkbox'] div {{background-color: {toggle_color} !important;}}</style>", unsafe_allow_html=True)
+        
         col1, col2 = st.columns(2)
         q_in = col1.number_input("股數 (Qty)", min_value=0.0, step=1.0, value=None)
         p_in = col2.number_input("成交價格 (Price)", min_value=0.0, step=0.01, value=None)
         sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.01, value=None)
         st.divider()
+        
+        # 新增標籤屬性
+        mkt_cond = st.selectbox("市場環境", ["Trending Up", "Trending Down", "Range/Choppy", "High Volatility", "N/A"])
+        mistake_in = st.selectbox("錯誤標籤", ["None", "Fomo", "Revenge Trade", "Fat Finger", "Late Entry", "Moved Stop"])
+        
         emo_in = st.select_slider("心理狀態", options=["恐慌", "猶豫", "平靜", "自信", "衝動"], value="平靜")
         rr_in = st.number_input("預期盈虧比 (R:R)", value=2.0, min_value=0.1)
+        
         default_strategies = ["Pullback", "Breakout", "Buyable Gapup"]
         existing_custom = [s for s in df['Strategy'].unique().tolist() if s not in default_strategies] if not df.empty else []
         tags = default_strategies + existing_custom
         st_in = st.selectbox("策略 (Strategy)", tags + ["➕ 新增..."])
         if st_in == "➕ 新增...": st_in = st.text_input("輸入新策略名稱")
+        
         note_in = st.text_area("決策筆記")
+        
         if st.form_submit_button("儲存執行紀錄"):
             if not s_in or q_in is None or p_in is None or q_in <= 0 or p_in <= 0:
                 st.error("請完整填寫代號、股數與價格")
             else:
                 save_transaction({
                     "Date": d_in.strftime('%Y-%m-%d'), "Symbol": s_in, "Action": act_in, 
-                    "Strategy": st_in, "Price": p_in, "Quantity": q_in, 
+                    "Strategy": clean_strategy(st_in), "Price": p_in, "Quantity": q_in, 
                     "Stop_Loss": sl_in if sl_in is not None else 0, "Fees": 0, 
-                    "Emotion": emo_in, "Risk_Reward": rr_in, "Notes": note_in, "Timestamp": int(time.time())
+                    "Emotion": emo_in, "Risk_Reward": rr_in, "Notes": note_in, 
+                    "Timestamp": int(time.time()),
+                    "Market_Condition": mkt_cond, "Mistake_Tag": mistake_in
                 })
                 st.success(f"✅ 已儲存 {s_in}")
                 time.sleep(0.5)
@@ -225,32 +270,45 @@ with t1:
                 risk_raw = (now - d['last_sl']) * d['qty']
                 total_sl_risk_hkd += get_hkd_value(s, risk_raw)
 
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("已實現損益 (HKD)", f"${realized_pnl_total_hkd:,.2f}")
-    col2.metric("總持倉風險 (HKD)", f"${total_sl_risk_hkd:,.2f}")
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("已實現損益 (HKD)", f"${realized_pnl_total_hkd:,.2f}")
+    m2.metric("期望值 (Expectancy)", f"${expectancy_val:,.2f}")
+    m3.metric("平均持倉", f"{avg_dur_val:.1f} 天")
     trade_count = len(completed_trades_df)
-    col3.metric("勝率", f"{(len(completed_trades_df[completed_trades_df['PnL_Raw'] > 0]) / trade_count * 100) if trade_count > 0 else 0:.1f}%")
-    col4.metric("平均 R:R", f"{df['Risk_Reward'].mean():.2f}" if not df.empty else "0")
-    col5.metric("總交易場數", f"{trade_count}")
+    m4.metric("勝率", f"{(len(completed_trades_df[completed_trades_df['PnL_HKD'] > 0]) / trade_count * 100) if trade_count > 0 else 0:.1f}%")
+    m5.metric("總交易場數", f"{trade_count}")
 
     if not equity_df.empty:
-        st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", title="累計損益曲線 (HKD匯總)", height=300), use_container_width=True)
+        st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", title="累計損益曲線 (HKD 匯總)", height=300), use_container_width=True)
 
     if not completed_trades_df.empty:
         st.divider()
-        st.subheader("🏆 交易排行榜 (原始幣種)")
+        st.subheader("🏆 交易排行榜 (按 HKD 價值排序)")
+        
         display_trades = completed_trades_df.copy()
-        display_trades['PnL_Display'] = display_trades.apply(lambda x: f"{get_currency_symbol(x['Symbol'])} {x['PnL_Raw']:,.2f}", axis=1)
+        # 準備顯示用的欄位
+        display_trades['原始損益'] = display_trades.apply(lambda x: f"{get_currency_symbol(x['Symbol'])} {x['PnL_Raw']:,.2f}", axis=1)
+        display_trades['HKD 損益'] = display_trades['PnL_HKD'].apply(lambda x: f"${x:,.2f}")
+        
+        # 改成中文欄位名
+        display_trades = display_trades.rename(columns={
+            "Exit_Date": "出場日期",
+            "Entry_Date": "進場日期",
+            "Symbol": "代號",
+            "Duration_Days": "持有天數"
+        })
         
         rank_col1, rank_col2 = st.columns(2)
         with rank_col1:
             st.markdown("##### 🟢 Top 獲利")
-            top_profit = display_trades.sort_values(by="PnL_Raw", ascending=False).head(5)
-            st.dataframe(top_profit[['Exit_Date', 'Symbol', 'PnL_Display']], hide_index=True, use_container_width=True)
+            # 依照 PnL_HKD 排序以確保美股港股比較基準一致
+            top_profit = display_trades.sort_values(by="PnL_HKD", ascending=False).head(5)
+            st.dataframe(top_profit[['出場日期', '代號', '原始損益', 'HKD 損益']], hide_index=True, use_container_width=True)
+            
         with rank_col2:
             st.markdown("##### 🔴 Top 虧損")
-            top_loss = display_trades.sort_values(by="PnL_Raw", ascending=True).head(5)
-            st.dataframe(top_loss[['Exit_Date', 'Symbol', 'PnL_Display']], hide_index=True, use_container_width=True)
+            top_loss = display_trades.sort_values(by="PnL_HKD", ascending=True).head(5)
+            st.dataframe(top_loss[['出場日期', '代號', '原始損益', 'HKD 損益']], hide_index=True, use_container_width=True)
 
 with t2:
     st.markdown("### 🟢 持倉概覽 (原始幣種計)")
@@ -267,7 +325,6 @@ with t2:
             pos_size_raw = now * qty if now else 0
             roi = (un_pnl_raw/(qty * avg_p)*100) if (now and avg_p!=0) else 0
 
-            # 預先處理成格式化字串以確保顯示千分位和兩位小數
             processed_p_data.append({
                 "代號": s, 
                 "持股數": f"{qty:,.2f}", 
@@ -277,7 +334,7 @@ with t2:
                 "部位價值": f"{pos_size_raw:,.2f}",
                 "停損回撤": f"{sl_risk_raw:,.2f}",
                 "未實現損益": f"{un_pnl_raw:,.2f}", 
-                "報酬%": roi # 保持數值供 ProgressColumn 使用
+                "報酬%": roi
             })
         p_df = pd.DataFrame(processed_p_data)
         
@@ -291,7 +348,6 @@ with t2:
                     max_value=20,
                     color="green" if p_df["報酬%"].mean() >= 0 else "red" 
                 )
-                # 其餘欄位已轉為字串，自動顯示千分位，不需要額外配置
             }, 
             hide_index=True, 
             use_container_width=True
@@ -314,12 +370,20 @@ with t3:
             st.plotly_chart(fig, use_container_width=True)
 
 with t4:
-    st.subheader("📜 歷史紀錄")
+    st.subheader("📜 歷史紀錄與心理分析")
     if not df.empty:
+        # 顯示包含新標籤的歷史紀錄
         st.dataframe(df.sort_values("Timestamp", ascending=False), use_container_width=True, hide_index=True)
+        
+        st.divider()
+        st.subheader("⚠️ 錯誤標籤分析")
+        mistake_counts = df['Mistake_Tag'].value_counts()
+        if not mistake_counts.empty:
+            st.plotly_chart(px.pie(names=mistake_counts.index, values=mistake_counts.values, title="交易錯誤分布"), use_container_width=True)
 
 with t5:
     st.subheader("🛠️ 數據管理")
+    # ... (原有管理功能保留) ...
     with st.expander("📤 批量上傳交易紀錄"):
         uploaded_file = st.file_uploader("選擇 CSV 或 Excel 檔案", type=["csv", "xlsx"])
         if uploaded_file and st.button("🚀 開始匯入"):
@@ -366,16 +430,15 @@ with t5:
 
         st.divider()
         st.markdown("### ⚙️ 數據重設")
-        confirm_reset = st.checkbox("我確定要清空所有交易歷史紀錄 (此操作不可撤銷)")
+        confirm_reset = st.checkbox("我確定要清空所有交易歷史紀錄")
         if confirm_reset:
             if st.button("執行清空所有數據", use_container_width=True):
                 empty_df = pd.DataFrame(columns=[
                     "Date", "Symbol", "Action", "Strategy", "Price", "Quantity", 
-                    "Stop_Loss", "Fees", "Emotion", "Risk_Reward", "Notes", "Img", "Timestamp"
+                    "Stop_Loss", "Fees", "Emotion", "Risk_Reward", "Notes", "Img", "Timestamp",
+                    "Market_Condition", "Mistake_Tag"
                 ])
                 save_all_data(empty_df)
                 st.error("💥 所有交易紀錄已清空！")
                 time.sleep(0.5)
                 st.rerun()
-    else:
-        st.info("目前沒有數據可管理。")
