@@ -1,5 +1,6 @@
 streamlit
 pandas
-requests
 yfinance
 plotly
+requests
+openpyxl  # 用於讀取 excel
