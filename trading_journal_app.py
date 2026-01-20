@@ -231,20 +231,7 @@ with t1:
     m4.metric("平均持倉", f"{f_dur:.1f} 天")
     cnt = len(f_comp)
     m5.metric("勝率 / 場數", f"{(len(f_comp[f_comp['PnL_HKD'] > 0])/cnt*100 if cnt>0 else 0):.1f}% ({cnt})")
-    
-    # 補回：最優交易與損益熱圖
-    if not f_comp.empty:
-        best_trade = f_comp.loc[f_comp['PnL_HKD'].idxmax()]
-        st.info(f"🏆 **最優交易回顧**: {best_trade['Symbol']} | 獲利: ${best_trade['PnL_HKD']:,.2f} | 盈虧比: {best_trade['Trade_R']:.2f}R")
-        
-        st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", title="資金曲線 (Equity Curve)", height=300), use_container_width=True)
-        
-        # 損益熱圖
-        st.subheader("🌡️ 交易盈虧熱圖 (Trade PnL Heatmap)")
-        fig_heat = px.bar(f_comp, x='Exit_Date', y='PnL_HKD', color='PnL_HKD', 
-                          color_continuous_scale=['red', 'gray', 'green'], 
-                          title="每日交易結果分布")
-        st.plotly_chart(fig_heat, use_container_width=True)
+    if not equity_df.empty: st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", title="累計損益曲線 (全歷史)", height=300), use_container_width=True)
 
 with t2:
     st.markdown("### 🟢 持倉概覽")
@@ -284,6 +271,7 @@ with t4:
                 agg_df['Profit Factor'] = agg_df['Gross_Win'] / agg_df['Gross_Loss'].replace(0, 1)
                 st.dataframe(agg_df, hide_index=True, use_container_width=True)
 
+    # --- EXACT CHANGES REQUIRED: 🤖 Free AI Review Export ---
     st.divider()
     st.subheader("🤖 Free AI Review Export")
     review_mode = st.radio("Export for review:", ["Single Trade", "Period Summary", "Full Journal"])
@@ -297,40 +285,56 @@ with t4:
     elif review_mode == "Period Summary":
         if not completed_trades_df.empty:
             summary_stats = completed_trades_df.agg({'Trade_R': 'mean', 'PnL_HKD': 'mean', 'Duration_Days': 'mean'}).to_dict()
-            export_data = {"period": "Current filtered period", "trades": len(completed_trades_df), **summary_stats}
+            export_data = {
+                "period": "Current filtered period",
+                "trades": len(completed_trades_df),
+                **summary_stats,
+                "top_strategy": completed_trades_df.groupby('Strategy')['Trade_R'].mean().idxmax() if not completed_trades_df.empty else "N/A",
+                "breakdowns": completed_trades_df.groupby(['Strategy', 'Emotion']).size().to_dict() if not completed_trades_df.empty else {}
+            }
     else:  # Full Journal
         if not completed_trades_df.empty:
-            export_data = {"total_trades": len(completed_trades_df), "avg_R": completed_trades_df['Trade_R'].mean()}
+            export_data = {
+                "total_trades": len(completed_trades_df),
+                "avg_R": completed_trades_df['Trade_R'].mean() if not completed_trades_df.empty else 0,
+                "win_rate": (completed_trades_df['PnL_HKD'] > 0).mean() * 100 if not completed_trades_df.empty else 0,
+                "recent_trades": completed_trades_df.tail(10).to_dict('records') if not completed_trades_df.empty else [],
+                "tag_breakdowns": completed_trades_df.groupby(['Strategy', 'Mistake_Tag', 'Market_Condition'])['Trade_R'].mean().to_dict() if not completed_trades_df.empty else {}
+            }
 
     if export_data:
+        # Export buttons
+        csv_buffer = io.StringIO()
+        pd.DataFrame([export_data]).astype(str).to_csv(csv_buffer, index=False)
+        st.download_button("📥 Download CSV", csv_buffer.getvalue(), f"ai-review-{review_mode.lower().replace(' ', '-')}.csv", "text/csv")
+        
         json_str = json.dumps(export_data, indent=2, default=str)
-        st.download_button("📥 Download JSON for AI", json_str, f"ai-review.json", "application/json")
+        st.download_button("📥 Download JSON", json_str, f"ai-review-{review_mode.lower().replace(' ', '-')}.json", "application/json")
+
+        # Prompt template
+        with st.expander("📋 Copy this prompt → Paste to gemini.google.com or claude.ai"):
+            prompt_template = """
+You are my momentum trading coach. Review this trading data:
+
+PASTE YOUR EXPORTED CSV/JSON DATA HERE
+
+Structure EXACTLY as:
+**1. WHAT WENT WELL** (process strengths)
+**2. PROCESS VIOLATIONS** (tag/note issues) 
+**3. EDGE OPPORTUNITIES** (best strategies/conditions)
+**4. RISK FIXES** (stops, sizing)
+**5. WEEKLY ACTION** (1-2 steps)
+
+Momentum focus: pullbacks, breakouts, trend. Data-driven only.
+"""
+            st.code(prompt_template, language="text")
+
+    if not df.empty:
+        st.divider()
+        hist_df = df.sort_values("Timestamp", ascending=False).copy()
+        hist_df['截圖'] = hist_df['Img'].apply(lambda x: "🖼️" if pd.notnull(x) and os.path.exists(x) else "")
+        st.dataframe(hist_df[["Date", "Symbol", "Action", "Strategy", "Price", "Quantity", "Stop_Loss", "Emotion", "Mistake_Tag", "截圖"]], use_container_width=True, hide_index=True)
 
 with t5:
     st.subheader("🛠️ 數據管理")
-    
-    # 補回：CSV 導入與備份功能
-    col_mgmt1, col_mgmt2 = st.columns(2)
-    with col_mgmt1:
-        st.markdown("#### 📥 導入數據 (CSV)")
-        uploaded_csv = st.file_uploader("選擇您的歷史 CSV 檔案", type="csv")
-        if uploaded_csv:
-            new_df = pd.read_csv(uploaded_csv)
-            if st.button("確認合併數據"):
-                merged_df = pd.concat([df, new_df]).drop_duplicates(subset=['Timestamp', 'Symbol', 'Price'], keep='last')
-                save_all_data(merged_df)
-                st.success("數據合併成功！")
-                st.rerun()
-                
-    with col_mgmt2:
-        st.markdown("#### 📤 備份數據")
-        csv_data = df.to_csv(index=False).encode('utf-8')
-        st.download_button("下載當前日誌備份", data=csv_data, file_name=f"trade_backup_{datetime.now().strftime('%Y%m%d')}.csv", mime="text/csv")
-
-    st.divider()
-    st.markdown("#### 📋 原始數據查看")
-    st.dataframe(df, use_container_width=True)
-    
-    if st.button("🚨 警告：清空所有數據"):
-        save_all_data(pd.DataFrame(columns=df.columns))
-        st.rerun()
+    if st.button("🚨 清空所有數據"): save_all_data(pd.DataFrame(columns=df.columns)); st.rerun()
