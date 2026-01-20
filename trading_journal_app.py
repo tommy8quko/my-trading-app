@@ -23,7 +23,7 @@ def init_csv():
         df = pd.DataFrame(columns=[
             "Date", "Symbol", "Action", "Strategy", "Price", "Quantity", 
             "Stop_Loss", "Fees", "Emotion", "Risk_Reward", "Notes", "Img", "Timestamp",
-            "Market_Condition", "Mistake_Tag" # 新增欄位
+            "Market_Condition", "Mistake_Tag" 
         ])
         df.to_csv(FILE_NAME, index=False)
 
@@ -50,13 +50,11 @@ def load_data():
         if df.empty:
             return df
         
-        # 數據清理與格式統一
         if 'Symbol' in df.columns:
             df['Symbol'] = df['Symbol'].apply(format_symbol)
         if 'Strategy' in df.columns:
             df['Strategy'] = df['Strategy'].apply(clean_strategy)
             
-        # 確保新增欄位存在
         for col in ["Market_Condition", "Mistake_Tag"]:
             if col not in df.columns:
                 df[col] = "N/A"
@@ -114,22 +112,20 @@ def calculate_portfolio(df):
         qty = float(row['Quantity']) if pd.notnull(row['Quantity']) else 0.0
         price = float(row['Price']) if pd.notnull(row['Price']) else 0.0
         sl = float(row['Stop_Loss']) if pd.notnull(row['Stop_Loss']) else 0.0
-        date = row['Date']
-        ts = row['Timestamp']
+        date_str = row['Date']
         
         if sym not in positions:
             positions[sym] = {'qty': 0.0, 'avg_price': 0.0, 'last_sl': 0.0}
         
         if sym not in cycle_tracker:
-            cycle_tracker[sym] = {'cash_flow_raw': 0.0, 'start_date': date, 'start_ts': ts, 'is_active': False}
+            cycle_tracker[sym] = {'cash_flow_raw': 0.0, 'start_date': date_str, 'is_active': False}
             
         curr = positions[sym]
         if sl > 0: curr['last_sl'] = sl
         
         if not cycle_tracker[sym]['is_active'] and qty > 0:
             cycle_tracker[sym]['is_active'] = True
-            cycle_tracker[sym]['start_date'] = date
-            cycle_tracker[sym]['start_ts'] = ts
+            cycle_tracker[sym]['start_date'] = date_str
             cycle_tracker[sym]['cash_flow_raw'] = 0.0
 
         is_buy = any(word in action.upper() for word in ["買入", "BUY", "B"])
@@ -156,9 +152,13 @@ def calculate_portfolio(df):
                 curr['qty'] -= sell_qty
                 
                 if curr['qty'] < 0.0001:
-                    duration_days = (ts - cycle_tracker[sym]['start_ts']) / 86400
+                    # 改用 Date 計算持倉天數
+                    d1 = datetime.strptime(cycle_tracker[sym]['start_date'], '%Y-%m-%d')
+                    d2 = datetime.strptime(date_str, '%Y-%m-%d')
+                    duration_days = float((d2 - d1).days)
+                    
                     completed_trades.append({
-                        "Exit_Date": date,
+                        "Exit_Date": date_str,
                         "Entry_Date": cycle_tracker[sym]['start_date'],
                         "Symbol": sym, 
                         "PnL_Raw": cycle_tracker[sym]['cash_flow_raw'],
@@ -167,11 +167,10 @@ def calculate_portfolio(df):
                     })
                     cycle_tracker[sym]['is_active'] = False
                 
-                equity_curve.append({"Date": date, "Cumulative PnL": running_pnl_hkd})
+                equity_curve.append({"Date": date_str, "Cumulative PnL": running_pnl_hkd})
 
     completed_df = pd.DataFrame(completed_trades)
     
-    # 計算 Expectancy 與 平均持倉時間
     expectancy = 0
     avg_duration = 0
     if not completed_df.empty:
@@ -225,7 +224,6 @@ with st.sidebar:
         sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.01, value=None)
         st.divider()
         
-        # 新增標籤屬性
         mkt_cond = st.selectbox("市場環境", ["Trending Up", "Trending Down", "Range/Choppy", "High Volatility", "N/A"])
         mistake_in = st.selectbox("錯誤標籤", ["None", "Fomo", "Revenge Trade", "Fat Finger", "Late Entry", "Moved Stop"])
         
@@ -286,11 +284,9 @@ with t1:
         st.subheader("🏆 交易排行榜 (按 HKD 價值排序)")
         
         display_trades = completed_trades_df.copy()
-        # 準備顯示用的欄位
         display_trades['原始損益'] = display_trades.apply(lambda x: f"{get_currency_symbol(x['Symbol'])} {x['PnL_Raw']:,.2f}", axis=1)
         display_trades['HKD 損益'] = display_trades['PnL_HKD'].apply(lambda x: f"${x:,.2f}")
         
-        # 改成中文欄位名
         display_trades = display_trades.rename(columns={
             "Exit_Date": "出場日期",
             "Entry_Date": "進場日期",
@@ -301,7 +297,6 @@ with t1:
         rank_col1, rank_col2 = st.columns(2)
         with rank_col1:
             st.markdown("##### 🟢 Top 獲利")
-            # 依照 PnL_HKD 排序以確保美股港股比較基準一致
             top_profit = display_trades.sort_values(by="PnL_HKD", ascending=False).head(5)
             st.dataframe(top_profit[['出場日期', '代號', '原始損益', 'HKD 損益']], hide_index=True, use_container_width=True)
             
@@ -325,6 +320,7 @@ with t2:
             pos_size_raw = now * qty if now else 0
             roi = (un_pnl_raw/(qty * avg_p)*100) if (now and avg_p!=0) else 0
 
+            # 確保欄位顯示千分位
             processed_p_data.append({
                 "代號": s, 
                 "持股數": f"{qty:,.2f}", 
@@ -372,7 +368,6 @@ with t3:
 with t4:
     st.subheader("📜 歷史紀錄與心理分析")
     if not df.empty:
-        # 顯示包含新標籤的歷史紀錄
         st.dataframe(df.sort_values("Timestamp", ascending=False), use_container_width=True, hide_index=True)
         
         st.divider()
@@ -383,7 +378,6 @@ with t4:
 
 with t5:
     st.subheader("🛠️ 數據管理")
-    # ... (原有管理功能保留) ...
     with st.expander("📤 批量上傳交易紀錄"):
         uploaded_file = st.file_uploader("選擇 CSV 或 Excel 檔案", type=["csv", "xlsx"])
         if uploaded_file and st.button("🚀 開始匯入"):
