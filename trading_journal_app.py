@@ -131,12 +131,11 @@ def calculate_portfolio(df):
         is_buy = any(word in action.upper() for word in ["買入", "BUY", "B"])
         is_sell = any(word in action.upper() for word in ["賣出", "SELL", "S"])
 
-        # 初始風險邏輯：如果是該週期的第一筆買入且有止損，記錄初始風險
         if not cycle_tracker[sym]['is_active'] and is_buy and qty > 0:
             cycle_tracker[sym]['is_active'] = True
             cycle_tracker[sym]['start_date'] = date_str
             cycle_tracker[sym]['cash_flow_raw'] = 0.0
-            # R 乘數分母：(進場價 - 初始止損) * 數量
+            # 初始風險 = |進場價 - 初始止損| * 數量 (計算 R 期望值的分母)
             if sl > 0:
                 cycle_tracker[sym]['initial_risk_raw'] = abs(price - sl) * qty
             else:
@@ -167,7 +166,6 @@ def calculate_portfolio(df):
                     d2 = datetime.strptime(date_str, '%Y-%m-%d')
                     duration_days = float((d2 - d1).days)
                     
-                    # 計算該筆交易的 R 乘數 (最終損益 / 初始風險)
                     pnl_raw = cycle_tracker[sym]['cash_flow_raw']
                     init_risk = cycle_tracker[sym]['initial_risk_raw']
                     trade_r = (pnl_raw / init_risk) if init_risk > 0 else 0.0
@@ -191,7 +189,6 @@ def calculate_portfolio(df):
     expectancy_r = 0
     avg_duration = 0
     if not completed_df.empty:
-        # HKD 期望值
         wins = completed_df[completed_df['PnL_HKD'] > 0]
         losses = completed_df[completed_df['PnL_HKD'] <= 0]
         win_rate = len(wins) / len(completed_df)
@@ -199,10 +196,7 @@ def calculate_portfolio(df):
         avg_win_hkd = wins['PnL_HKD'].mean() if not wins.empty else 0
         avg_loss_hkd = abs(losses['PnL_HKD'].mean()) if not losses.empty else 0
         expectancy_hkd = (win_rate * avg_win_hkd) - (loss_rate * avg_loss_hkd)
-        
-        # R 乘數期望值
         expectancy_r = completed_df['Trade_R'].mean()
-        
         avg_duration = completed_df['Duration_Days'].mean()
 
     active_positions = {k: v for k, v in positions.items() if v['qty'] > 0.0001}
@@ -227,9 +221,12 @@ def get_live_prices(symbols_list):
     except:
         return {}
 
-# --- 4. UI 介面 ---
+# --- 3. 數據與導航 ---
 df = load_data()
 active_pos, realized_pnl_total_hkd, completed_trades_df, equity_df, expectancy_val, expectancy_r_val, avg_dur_val = calculate_portfolio(df)
+
+# 定義 Tabs (修正 NameError)
+t1, t2, t3, t4, t5 = st.tabs(["📈 績效矩陣", "🔥 持倉 & 報價", "🔄 交易重播", "🧠 心理 & 歷史", "🛠️ 數據管理"])
 
 with t1:
     st.subheader("📊 績效概覽")
@@ -239,7 +236,6 @@ with t1:
         live_prices_for_risk = get_live_prices(list(active_pos.keys()))
         for s, d in active_pos.items():
             now = live_prices_for_risk.get(s)
-            # 這裡計算的是「當前」的風險，受後續移動止損影響
             if now and d['last_sl'] > 0:
                 risk_raw = (now - d['last_sl']) * d['qty']
                 total_sl_risk_hkd += get_hkd_value(s, risk_raw)
@@ -257,70 +253,20 @@ with t1:
 
     if not completed_trades_df.empty:
         st.divider()
-        st.subheader("🏆 交易排行榜 (按 HKD 價值排序)")
-        
+        st.subheader("🏆 交易排行榜")
         display_trades = completed_trades_df.copy()
         display_trades['原始損益'] = display_trades.apply(lambda x: f"{get_currency_symbol(x['Symbol'])} {x['PnL_Raw']:,.2f}", axis=1)
         display_trades['HKD 損益'] = display_trades['PnL_HKD'].apply(lambda x: f"${x:,.2f}")
         display_trades['R 乘數'] = display_trades['Trade_R'].apply(lambda x: f"{x:.2f}R")
-        
-        display_trades = display_trades.rename(columns={
-            "Exit_Date": "出場日期",
-            "Entry_Date": "進場日期",
-            "Symbol": "代號",
-            "Duration_Days": "持有天數"
-        })
+        display_trades = display_trades.rename(columns={"Exit_Date": "出場日期", "Entry_Date": "進場日期", "Symbol": "代號", "Duration_Days": "持有天數"})
         
         rank_col1, rank_col2 = st.columns(2)
         with rank_col1:
             st.markdown("##### 🟢 Top 獲利")
-            top_profit = display_trades.sort_values(by="PnL_HKD", ascending=False).head(5)
-            st.dataframe(top_profit[['出場日期', '代號', '原始損益', 'HKD 損益', 'R 乘數']], hide_index=True, use_container_width=True)
-            
+            st.dataframe(display_trades.sort_values(by="PnL_HKD", ascending=False).head(5)[['出場日期', '代號', '原始損益', 'HKD 損益', 'R 乘數']], hide_index=True, use_container_width=True)
         with rank_col2:
             st.markdown("##### 🔴 Top 虧損")
-            top_loss = display_trades.sort_values(by="PnL_HKD", ascending=True).head(5)
-            st.dataframe(top_loss[['出場日期', '代號', '原始損益', 'HKD 損益', 'R 乘數']], hide_index=True, use_container_width=True)
-
-# --- 以下代碼與原版本保持一致 (包含 Sidebar, Tabs 2-5) ---
-# ... [省略重複的介面與管理邏輯代碼，確保邏輯完全一致] ...
-
-with st.sidebar:
-    st.header("⚡ 執行面板")
-    with st.form("trade_form", clear_on_submit=True):
-        d_in = st.date_input("日期")
-        s_raw = st.text_input("代號 (Ticker)", placeholder="例如: 700 或 TSLA").upper().strip()
-        s_in = format_symbol(s_raw) 
-        is_sell = st.toggle("Buy 🟢 / Sell 🔴", value=False)
-        act_in = "賣出 Sell" if is_sell else "買入 Buy"
-        col1, col2 = st.columns(2)
-        q_in = col1.number_input("股數 (Qty)", min_value=0.0, step=1.0, value=None)
-        p_in = col2.number_input("成交價格 (Price)", min_value=0.0, step=0.01, value=None)
-        sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.01, value=None)
-        st.divider()
-        mkt_cond = st.selectbox("市場環境", ["Trending Up", "Trending Down", "Range/Choppy", "High Volatility", "N/A"])
-        mistake_in = st.selectbox("錯誤標籤", ["None", "Fomo", "Revenge Trade", "Fat Finger", "Late Entry", "Moved Stop"])
-        emo_in = st.select_slider("心理狀態", options=["恐慌", "猶豫", "平靜", "自信", "衝動"], value="平靜")
-        rr_in = st.number_input("預期盈虧比 (R:R)", value=2.0, min_value=0.1)
-        default_strategies = ["Pullback", "Breakout", "Buyable Gapup"]
-        existing_custom = [s for s in df['Strategy'].unique().tolist() if s not in default_strategies] if not df.empty else []
-        tags = default_strategies + existing_custom
-        st_in = st.selectbox("策略 (Strategy)", tags + ["➕ 新增..."])
-        if st_in == "➕ 新增...": st_in = st.text_input("輸入新策略名稱")
-        note_in = st.text_area("決策筆記")
-        if st.form_submit_button("儲存執行紀錄"):
-            if not s_in or q_in is None or p_in is None or q_in <= 0 or p_in <= 0:
-                st.error("請完整填寫代號、股數與價格")
-            else:
-                save_transaction({
-                    "Date": d_in.strftime('%Y-%m-%d'), "Symbol": s_in, "Action": act_in, 
-                    "Strategy": clean_strategy(st_in), "Price": p_in, "Quantity": q_in, 
-                    "Stop_Loss": sl_in if sl_in is not None else 0, "Fees": 0, 
-                    "Emotion": emo_in, "Risk_Reward": rr_in, "Notes": note_in, 
-                    "Timestamp": int(time.time()), "Market_Condition": mkt_cond, "Mistake_Tag": mistake_in
-                })
-                st.success(f"✅ 已儲存 {s_in}")
-                time.sleep(0.5); st.rerun()
+            st.dataframe(display_trades.sort_values(by="PnL_HKD", ascending=True).head(5)[['出場日期', '代號', '原始損益', 'HKD 損益', 'R 乘數']], hide_index=True, use_container_width=True)
 
 with t2:
     st.markdown("### 🟢 持倉概覽 (原始幣種計)")
@@ -389,3 +335,29 @@ with t5:
         if st.button("💾 更新此筆紀錄"):
             df.loc[selected_idx, 'Price'] = n_p; df.loc[selected_idx, 'Quantity'] = n_q; df.loc[selected_idx, 'Stop_Loss'] = n_sl
             save_all_data(df); st.success("✅ 紀錄已更新！"); time.sleep(0.5); st.rerun()
+
+with st.sidebar:
+    st.header("⚡ 執行面板")
+    with st.form("trade_form", clear_on_submit=True):
+        d_in = st.date_input("日期")
+        s_raw = st.text_input("代號 (Ticker)", placeholder="例如: 700 或 TSLA").upper().strip()
+        s_in = format_symbol(s_raw) 
+        is_sell = st.toggle("Buy 🟢 / Sell 🔴", value=False)
+        act_in = "賣出 Sell" if is_sell else "買入 Buy"
+        col1, col2 = st.columns(2)
+        q_in = col1.number_input("股數 (Qty)", min_value=0.0, step=1.0, value=None)
+        p_in = col2.number_input("成交價格 (Price)", min_value=0.0, step=0.01, value=None)
+        sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.01, value=None)
+        st.divider()
+        mkt_cond = st.selectbox("市場環境", ["Trending Up", "Trending Down", "Range/Choppy", "High Volatility", "N/A"])
+        mistake_in = st.selectbox("錯誤標籤", ["None", "Fomo", "Revenge Trade", "Fat Finger", "Late Entry", "Moved Stop"])
+        emo_in = st.select_slider("心理狀態", options=["恐慌", "猶豫", "平靜", "自信", "衝動"], value="平靜")
+        rr_in = st.number_input("預期盈虧比 (R:R)", value=2.0, min_value=0.1)
+        st_in = st.selectbox("策略 (Strategy)", ["Pullback", "Breakout", "Buyable Gapup", "➕ 新增..."])
+        if st_in == "➕ 新增...": st_in = st.text_input("輸入新策略名稱")
+        note_in = st.text_area("決策筆記")
+        if st.form_submit_button("儲存執行紀錄"):
+            if not s_in or q_in is None or p_in is None: st.error("請完整填寫代號、股數與價格")
+            else:
+                save_transaction({"Date": d_in.strftime('%Y-%m-%d'), "Symbol": s_in, "Action": act_in, "Strategy": clean_strategy(st_in), "Price": p_in, "Quantity": q_in, "Stop_Loss": sl_in if sl_in is not None else 0, "Fees": 0, "Emotion": emo_in, "Risk_Reward": rr_in, "Notes": note_in, "Timestamp": int(time.time()), "Market_Condition": mkt_cond, "Mistake_Tag": mistake_in})
+                st.success(f"✅ 已儲存 {s_in}"); time.sleep(0.5); st.rerun()
