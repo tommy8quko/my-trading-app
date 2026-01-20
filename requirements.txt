@@ -5,3 +5,4 @@ plotly
 requests
 openpyxl  # 用於讀取 excel
 st-gsheets-connection
+google-generativeai
