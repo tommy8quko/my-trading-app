@@ -112,8 +112,11 @@ def calculate_portfolio(df):
             cycle_tracker[sym]['is_active'] = True
             cycle_tracker[sym]['start_date'] = date_str
             cycle_tracker[sym]['cash_flow_raw'] = 0.0
-            if sl > 0: cycle_tracker[sym]['initial_risk_raw'] = abs(price - sl) * qty
-            else: cycle_tracker[sym]['initial_risk_raw'] = 0.0
+            # 只有當 sl > 0 且 sl != price 時才計算初始風險
+            if sl > 0 and abs(price - sl) > 0: 
+                cycle_tracker[sym]['initial_risk_raw'] = abs(price - sl) * qty
+            else: 
+                cycle_tracker[sym]['initial_risk_raw'] = 0.0
 
         if is_buy:
             cycle_tracker[sym]['cash_flow_raw'] -= (qty * price)
@@ -133,10 +136,14 @@ def calculate_portfolio(df):
                 d1, d2 = datetime.strptime(cycle_tracker[sym]['start_date'], '%Y-%m-%d'), datetime.strptime(date_str, '%Y-%m-%d')
                 pnl_raw = cycle_tracker[sym]['cash_flow_raw']
                 init_risk = cycle_tracker[sym]['initial_risk_raw']
+                
+                # 計算 Trade_R，如果 init_risk 為 0，設為 None 以便後續過濾
+                trade_r = (pnl_raw / init_risk) if init_risk > 0 else None
+                
                 completed_trades.append({
                     "Exit_Date": date_str, "Entry_Date": cycle_tracker[sym]['start_date'], "Symbol": sym, 
                     "PnL_Raw": pnl_raw, "PnL_HKD": get_hkd_value(sym, pnl_raw),
-                    "Duration_Days": float((d2 - d1).days), "Trade_R": (pnl_raw / init_risk) if init_risk > 0 else 0.0
+                    "Duration_Days": float((d2 - d1).days), "Trade_R": trade_r
                 })
                 cycle_tracker[sym]['is_active'] = False
             equity_curve.append({"Date": date_str, "Cumulative PnL": running_pnl_hkd})
@@ -146,10 +153,15 @@ def calculate_portfolio(df):
     exp_r = 0
     avg_dur = 0
     if not comp_df.empty:
+        # 計算期望值 (HKD)
         wins, losses = comp_df[comp_df['PnL_HKD'] > 0], comp_df[comp_df['PnL_HKD'] <= 0]
         wr = len(wins) / len(comp_df)
         exp_hkd = (wr * (wins['PnL_HKD'].mean() if not wins.empty else 0)) - ((1-wr) * (abs(losses['PnL_HKD'].mean()) if not losses.empty else 0))
-        exp_r = comp_df['Trade_R'].mean()
+        
+        # 關鍵更新：計算平均 R 乘數時過濾掉沒有 Stop Loss 的交易 (Trade_R 為 None 的筆數)
+        valid_r_trades = comp_df[comp_df['Trade_R'].notna()]
+        exp_r = valid_r_trades['Trade_R'].mean() if not valid_r_trades.empty else 0
+        
         avg_dur = comp_df['Duration_Days'].mean()
 
     return {k: v for k, v in positions.items() if v['qty'] > 0.0001}, total_realized_pnl_hkd, comp_df, pd.DataFrame(equity_curve), exp_hkd, exp_r, avg_dur
@@ -190,13 +202,19 @@ with st.sidebar:
         mkt_cond = st.selectbox("市場環境", ["Trending Up", "Trending Down", "Range/Choppy", "N/A"])
         mistake_in = st.selectbox("錯誤標籤", ["None", "Fomo", "Revenge Trade", "Late Entry", "Moved Stop"])
         emo_in = st.select_slider("心理狀態", options=["恐慌", "猶豫", "平靜", "自信", "衝動"], value="平靜")
-        rr_in = st.number_input("預期盈虧比 (R:R)", value=2.0)
+        # 根據要求移除 rr_in 預期盈虧比輸入
         st_in = st.selectbox("策略 (Strategy)", ["Pullback", "Breakout", "➕ 新增..."])
         if st_in == "➕ 新增...": st_in = st.text_input("輸入新策略名稱")
         note_in = st.text_area("決策筆記")
         if st.form_submit_button("儲存執行紀錄"):
             if s_in and q_in > 0 and p_in > 0:
-                save_transaction({"Date": d_in.strftime('%Y-%m-%d'), "Symbol": s_in, "Action": act_in, "Strategy": clean_strategy(st_in), "Price": p_in, "Quantity": q_in, "Stop_Loss": sl_in, "Fees": 0, "Emotion": emo_in, "Risk_Reward": rr_in, "Notes": note_in, "Timestamp": int(time.time()), "Market_Condition": mkt_cond, "Mistake_Tag": mistake_in})
+                save_transaction({
+                    "Date": d_in.strftime('%Y-%m-%d'), "Symbol": s_in, "Action": act_in, 
+                    "Strategy": clean_strategy(st_in), "Price": p_in, "Quantity": q_in, 
+                    "Stop_Loss": sl_in, "Fees": 0, "Emotion": emo_in, "Risk_Reward": 0, # 固定為0或從數據中隱藏
+                    "Notes": note_in, "Timestamp": int(time.time()), 
+                    "Market_Condition": mkt_cond, "Mistake_Tag": mistake_in
+                })
                 st.success(f"已儲存 {s_in}"); time.sleep(0.5); st.rerun()
 
 t1, t2, t3, t4, t5 = st.tabs(["📈 績效矩陣", "🔥 持倉 & 報價", "🔄 交易重播", "🧠 心理 & 歷史", "🛠️ 數據管理"])
@@ -213,6 +231,7 @@ with t1:
 
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("已實現損益 (HKD)", f"${realized_pnl_total_hkd:,.2f}")
+    # 這裡顯示的 R 乘數已自動過濾掉無止損的交易
     m2.metric("期望值 (HKD / R)", f"${exp_val:,.0f} / {exp_r_val:.2f}R")
     m3.metric("總停損回撤 (Open Risk)", f"${total_sl_risk_hkd:,.2f}")
     m4.metric("平均持倉", f"{avg_dur_val:.1f} 天")
@@ -226,7 +245,8 @@ with t1:
         display_trades = completed_trades_df.copy()
         display_trades['原始損益'] = display_trades.apply(lambda x: f"{get_currency_symbol(x['Symbol'])} {x['PnL_Raw']:,.2f}", axis=1)
         display_trades['HKD 損益'] = display_trades['PnL_HKD'].apply(lambda x: f"${x:,.2f}")
-        display_trades['R 乘數'] = display_trades['Trade_R'].apply(lambda x: f"{x:.2f}R")
+        # 排行榜中的 R 乘數如果為空則顯示 N/A
+        display_trades['R 乘數'] = display_trades['Trade_R'].apply(lambda x: f"{x:.2f}R" if pd.notnull(x) else "N/A")
         display_trades = display_trades.rename(columns={"Exit_Date": "出場日期", "Symbol": "代號", "Duration_Days": "持有天數"})
         
         r1, r2 = st.columns(2)
