@@ -186,22 +186,27 @@ with st.sidebar:
         is_sell = st.toggle("Buy 🟢 / Sell 🔴", value=False)
         act_in = "賣出 Sell" if is_sell else "買入 Buy"
         col1, col2 = st.columns(2)
-        q_in = col1.number_input("股數 (Qty)", min_value=0.0, step=1.0)
-        p_in = col2.number_input("成交價格 (Price)", min_value=0.0, step=0.01)
-        sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.01)
+        # 1. 不預設輸入數值 (value=None)
+        q_in = col1.number_input("股數 (Qty)", min_value=0.0, step=1.0, value=None)
+        p_in = col2.number_input("成交價格 (Price)", min_value=0.0, step=0.01, value=None)
+        sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.01, value=None)
         st.divider()
         mkt_cond = st.selectbox("市場環境", ["Trending Up", "Trending Down", "Range/Choppy", "High Volatility", "N/A"])
         mistake_in = st.selectbox("錯誤標籤", ["None", "Fomo", "Revenge Trade", "Fat Finger", "Late Entry", "Moved Stop"])
-        emo_in = st.select_slider("心理狀態", options=["恐慌", "猶豫", "平靜", "自信", "衝動"], value="平靜")
+        
+        # 2. 調整心理狀態位置：移至策略下方
         st_in = st.selectbox("策略 (Strategy)", ["Pullback", "Breakout", "➕ 新增..."])
         if st_in == "➕ 新增...": st_in = st.text_input("輸入新策略名稱")
+        
+        emo_in = st.select_slider("心理狀態", options=["恐慌", "猶豫", "平靜", "自信", "衝動"], value="平靜")
+        
         note_in = st.text_area("決策筆記")
         if st.form_submit_button("儲存執行紀錄"):
-            if s_in and q_in > 0 and p_in > 0:
+            if s_in and q_in is not None and p_in is not None:
                 save_transaction({
                     "Date": d_in.strftime('%Y-%m-%d'), "Symbol": s_in, "Action": act_in, 
                     "Strategy": clean_strategy(st_in), "Price": p_in, "Quantity": q_in, 
-                    "Stop_Loss": sl_in, "Fees": 0, "Emotion": emo_in, "Risk_Reward": 0,
+                    "Stop_Loss": sl_in if sl_in is not None else 0.0, "Fees": 0, "Emotion": emo_in, "Risk_Reward": 0,
                     "Notes": note_in, "Timestamp": int(time.time()), 
                     "Market_Condition": mkt_cond, "Mistake_Tag": mistake_in
                 })
@@ -229,7 +234,7 @@ with t1:
     if not equity_df.empty: 
         st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", title="累計損益曲線 (HKD)", height=300), use_container_width=True)
 
-    # --- 恢復：交易排行榜 ---
+    # 交易排行榜
     if not completed_trades_df.empty:
         st.divider()
         st.subheader("🏆 交易排行榜")
@@ -322,7 +327,7 @@ with t4:
         cols = ["Date", "Symbol", "Action", "Strategy", "成交價", "股數", "執行時止損", "Emotion", "Market_Condition", "Notes"]
         st.dataframe(history_display[cols], use_container_width=True, hide_index=True)
 
-        # --- 恢復：錯誤標籤分布圖 ---
+        # 錯誤標籤分布圖
         st.divider()
         mistake_counts = df[df['Mistake_Tag'] != "None"]['Mistake_Tag'].value_counts()
         if not mistake_counts.empty:
