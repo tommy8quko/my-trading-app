@@ -239,14 +239,26 @@ with t2:
         un_pnl = (now - avg_p) * qty if now else 0
         roi = (un_pnl / (qty * avg_p) * 100) if (now and avg_p != 0) else 0
         
-        # 1. 還原持倉面板的原始格式 (不使用 ProgressColumn)
         processed_p_data.append({
             "代號": s, "持股數": f"{qty:,.0f}", "平均成本": f"{avg_p:,.2f}", 
             "現價": f"{now:,.2f}" if now else "N/A", "當前止損": f"{last_sl:,.2f}", 
-            "未實現損益": f"{un_pnl:,.2f}", "報酬%": f"{roi:.2f}%"
+            "未實現損益": f"{un_pnl:,.2f}", "報酬%": roi
         })
     if processed_p_data: 
-        st.dataframe(pd.DataFrame(processed_p_data), hide_index=True, use_container_width=True)
+        # 重新加入報酬%的進度條視覺效果
+        st.dataframe(
+            pd.DataFrame(processed_p_data), 
+            column_config={
+                "報酬%": st.column_config.ProgressColumn(
+                    "報酬%", 
+                    format="%.2f%%", 
+                    min_value=-20, 
+                    max_value=20
+                )
+            },
+            hide_index=True, 
+            use_container_width=True
+        )
         if st.button("🔄 刷新即時報價", use_container_width=True): st.cache_data.clear(); st.rerun()
     else: st.info("目前無持倉部位")
 
@@ -255,12 +267,9 @@ with t3:
     if not df.empty:
         target = st.selectbox("選擇交易", df.index, format_func=lambda x: f"[{df.iloc[x]['Date']}] {df.iloc[x]['Symbol']}")
         row = df.iloc[target]
-        # 下載 OHLC 數據以繪製 K 線圖
         data = yf.download(row['Symbol'], start=(pd.to_datetime(row['Date']) - timedelta(days=20)).strftime('%Y-%m-%d'), progress=False)
         if not data.empty:
             if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.get_level_values(0)
-            
-            # 2. 升級為 K 線圖 (Candlestick Chart)
             fig = go.Figure(data=[go.Candlestick(
                 x=data.index,
                 open=data['Open'],
@@ -269,8 +278,6 @@ with t3:
                 close=data['Close'],
                 name='價格走勢'
             )])
-            
-            # 標記執行點
             fig.add_trace(go.Scatter(
                 x=[pd.to_datetime(row['Date'])], 
                 y=[row['Price']], 
@@ -280,7 +287,6 @@ with t3:
                 textposition="top center", 
                 name='執行點'
             ))
-            
             fig.update_layout(
                 title=f"{row['Symbol']} 交易環境回顧 (K線圖)", 
                 xaxis_title="日期", 
