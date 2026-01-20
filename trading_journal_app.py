@@ -190,8 +190,8 @@ with st.sidebar:
         p_in = col2.number_input("成交價格 (Price)", min_value=0.0, step=0.01)
         sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.01)
         st.divider()
-        mkt_cond = st.selectbox("市場環境", ["Trending Up", "Trending Down", "Range/Choppy", "N/A"])
-        mistake_in = st.selectbox("錯誤標籤", ["None", "Fomo", "Revenge Trade", "Late Entry", "Moved Stop"])
+        mkt_cond = st.selectbox("市場環境", ["Trending Up", "Trending Down", "Range/Choppy", "High Volatility", "N/A"])
+        mistake_in = st.selectbox("錯誤標籤", ["None", "Fomo", "Revenge Trade", "Fat Finger", "Late Entry", "Moved Stop"])
         emo_in = st.select_slider("心理狀態", options=["恐慌", "猶豫", "平靜", "自信", "衝動"], value="平靜")
         st_in = st.selectbox("策略 (Strategy)", ["Pullback", "Breakout", "➕ 新增..."])
         if st_in == "➕ 新增...": st_in = st.text_input("輸入新策略名稱")
@@ -226,7 +226,26 @@ with t1:
     m4.metric("平均持倉", f"{avg_dur_val:.1f} 天")
     m5.metric("勝率", f"{(len(completed_trades_df[completed_trades_df['PnL_HKD'] > 0]) / len(completed_trades_df) * 100) if not completed_trades_df.empty else 0:.1f}%")
 
-    if not equity_df.empty: st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", title="累計損益曲線 (HKD)", height=300), use_container_width=True)
+    if not equity_df.empty: 
+        st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", title="累計損益曲線 (HKD)", height=300), use_container_width=True)
+
+    # --- 恢復：交易排行榜 ---
+    if not completed_trades_df.empty:
+        st.divider()
+        st.subheader("🏆 交易排行榜")
+        display_trades = completed_trades_df.copy()
+        display_trades['原始損益'] = display_trades.apply(lambda x: f"{get_currency_symbol(x['Symbol'])} {x['PnL_Raw']:,.2f}", axis=1)
+        display_trades['HKD 損益'] = display_trades['PnL_HKD'].apply(lambda x: f"${x:,.2f}")
+        display_trades['R 乘數'] = display_trades['Trade_R'].apply(lambda x: f"{x:.2f}R" if pd.notnull(x) else "N/A")
+        display_trades = display_trades.rename(columns={"Exit_Date": "出場日期", "Symbol": "代號", "Duration_Days": "持有天數"})
+        
+        r1, r2 = st.columns(2)
+        with r1:
+            st.markdown("##### 🟢 Top 獲利 (依 HKD 排序)")
+            st.dataframe(display_trades.sort_values(by="PnL_HKD", ascending=False).head(5)[['出場日期', '代號', '原始損益', 'HKD 損益', 'R 乘數']], hide_index=True, use_container_width=True)
+        with r2:
+            st.markdown("##### 🔴 Top 虧損 (依 HKD 排序)")
+            st.dataframe(display_trades.sort_values(by="PnL_HKD", ascending=True).head(5)[['出場日期', '代號', '原始損益', 'HKD 損益', 'R 乘數']], hide_index=True, use_container_width=True)
 
 with t2:
     st.markdown("### 🟢 持倉概覽")
@@ -245,7 +264,6 @@ with t2:
             "未實現損益": f"{un_pnl:,.2f}", "報酬%": roi
         })
     if processed_p_data: 
-        # 重新加入報酬%的進度條視覺效果
         st.dataframe(
             pd.DataFrame(processed_p_data), 
             column_config={
@@ -303,6 +321,14 @@ with t4:
         history_display = history_display.rename(columns={"Stop_Loss": "執行時止損", "Price": "成交價", "Quantity": "股數"})
         cols = ["Date", "Symbol", "Action", "Strategy", "成交價", "股數", "執行時止損", "Emotion", "Market_Condition", "Notes"]
         st.dataframe(history_display[cols], use_container_width=True, hide_index=True)
+
+        # --- 恢復：錯誤標籤分布圖 ---
+        st.divider()
+        mistake_counts = df[df['Mistake_Tag'] != "None"]['Mistake_Tag'].value_counts()
+        if not mistake_counts.empty:
+            st.plotly_chart(px.pie(names=mistake_counts.index, values=mistake_counts.values, title="🧠 常見錯誤分佈 (排除 None)"), use_container_width=True)
+        else:
+            st.info("目前尚無錯誤標籤統計數據。")
 
 with t5:
     st.subheader("🛠️ 數據管理")
