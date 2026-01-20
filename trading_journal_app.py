@@ -20,7 +20,7 @@ if not os.path.exists("images"):
 
 st.set_page_config(page_title="TradeMaster Pro UI", layout="wide")
 
-# --- 資料讀取層 ---
+# --- 改進部分：資料讀取層 (支援 Google Sheets 與 CSV 雙模式) ---
 def get_data_connection():
     try:
         return st.connection("gsheets", type=GSheetsConnection)
@@ -29,6 +29,7 @@ def get_data_connection():
 
 def init_csv():
     if not os.path.exists(FILE_NAME):
+        # Change 1: Add Trade_ID to CSV schema
         df = pd.DataFrame(columns=[
             "Date", "Symbol", "Action", "Strategy", "Price", "Quantity", 
             "Stop_Loss", "Fees", "Emotion", "Risk_Reward", "Notes", "Img", "Timestamp",
@@ -74,6 +75,7 @@ def load_data():
     for col in ["Market_Condition", "Mistake_Tag", "Img"]:
         if col not in df.columns: df[col] = "N/A" if col != "Img" else None
     
+    # Ensure Trade_ID column exists (for legacy data compatibility)
     if 'Trade_ID' not in df.columns:
         df['Trade_ID'] = pd.NA
 
@@ -82,8 +84,8 @@ def load_data():
         save_all_data(df)
     
     df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
-    df['Price'] = pd.to_numeric(df['Price'], errors='coerce').fillna(0)
-    df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
+    df['Price'] = pd.to_numeric(df['Price'], errors='coerce')
+    df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce')
     df['Stop_Loss'] = pd.to_numeric(df['Stop_Loss'], errors='coerce').fillna(0)
     df['Timestamp'] = pd.to_numeric(df['Timestamp'], errors='coerce')
     return df
@@ -100,6 +102,7 @@ def save_all_data(df):
 
 def save_transaction(data):
     df = load_data()
+    # Change 1: Ensure Trade_ID is saved
     df = pd.concat([df, pd.DataFrame([data])], ignore_index=True)
     save_all_data(df)
 
@@ -111,32 +114,41 @@ def get_currency_symbol(symbol):
     if isinstance(symbol, str) and ".HK" in symbol.upper(): return "HK$"
     return "$"
 
+# Helper to find active trade ID for sidebar logic
 def get_symbol_state(df, symbol):
-    """判斷目前是否有持倉以及對應的 Trade_ID"""
     if df.empty: return False, None
-    # 使用穩定排序，確保同一時間戳的先後順序不變
-    df = df.sort_values(by="Timestamp", kind='mergesort')
+    # Sort to replay history correctly
+    df = df.sort_values(by="Timestamp")
+    active_tid = None
+    qty = 0
+    
+    # We need to replay to find if there is an open position currently
+    # This is a lightweight version of calculate_portfolio just for one symbol
     sym_df = df[df['Symbol'] == symbol]
     if sym_df.empty: return False, None
 
+    # Logic: track the Trade_ID of the currently open cycle
+    # We iterate to find the *last* open cycle
     current_cycle_id = None
     current_qty = 0
     
     for _, row in sym_df.iterrows():
-        action = str(row['Action']).upper()
+        action = str(row['Action'])
         r_qty = float(row['Quantity'])
         r_tid = row.get('Trade_ID')
         
-        # 處理 Legacy 數據的 ID 追蹤
-        if pd.isna(r_tid) and current_cycle_id is not None:
-            r_tid = current_cycle_id
+        # Fallback for legacy data without Trade_ID in CSV
+        if pd.isna(r_tid): 
+             # If we don't have IDs in CSV, we can't reliably link without full replay
+             # But for the purpose of "Adding new trade", we just need to know if qty > 0
+             pass 
 
-        is_buy = any(word in action for word in ["買入", "BUY", "B"])
-        is_sell = any(word in action for word in ["賣出", "SELL", "S"])
+        is_buy = any(word in action.upper() for word in ["買入", "BUY", "B"])
+        is_sell = any(word in action.upper() for word in ["賣出", "SELL", "S"])
         
         if is_buy:
-            if current_qty < 0.0001: # 新的開倉
-                current_cycle_id = r_tid 
+            if current_qty == 0:
+                current_cycle_id = r_tid # Start new cycle
             current_qty += r_qty
         elif is_sell:
             current_qty -= r_qty
@@ -144,57 +156,68 @@ def get_symbol_state(df, symbol):
                 current_qty = 0
                 current_cycle_id = None
     
-    return (current_qty > 0.0001), current_cycle_id
+    return (current_qty > 0), current_cycle_id
 
 
-# --- 2. 核心計算邏輯 (修復 P&L 與舊數據兼容) ---
+# --- 2. 核心計算邏輯 (Refactored for Change 2 & 3) ---
 @st.cache_data(ttl=60)
 def calculate_portfolio(df):
     if df.empty: return {}, 0, pd.DataFrame(), pd.DataFrame(), 0, 0, 0
     
     positions = {} 
-    # 使用 mergesort 確保穩定排序，這對處理同一天發生的舊交易至關重要
-    df = df.sort_values(by="Timestamp", kind='mergesort')
+    df = df.sort_values(by="Timestamp")
     total_realized_pnl_hkd = 0
     running_pnl_hkd = 0
     
+    # Change 2: cycle_tracker uses Trade_ID as key
     cycle_tracker = {} 
     completed_trades = [] 
     equity_curve = []
     
+    # Lookup to map Symbol -> Active Trade_ID
     active_trade_by_symbol = {}
 
     for _, row in df.iterrows():
         sym = format_symbol(row['Symbol']) 
-        action = str(row['Action']).upper() if pd.notnull(row['Action']) else ""
+        action = str(row['Action']) if pd.notnull(row['Action']) else ""
         if not sym or not action: continue
 
-        qty = float(row['Quantity'])
-        price = float(row['Price'])
-        sl = float(row['Stop_Loss'])
+        qty, price, sl = float(row['Quantity']), float(row['Price']), float(row['Stop_Loss'])
         date_str = row['Date']
         ts = row['Timestamp']
         
+        # Tags
+        strategy = row.get('Strategy', '')
+        emotion = row.get('Emotion', '')
+        mkt_cond = row.get('Market_Condition', '')
+        mistake = row.get('Mistake_Tag', '')
+        
+        # Get Trade_ID from row, or generate one if legacy/missing
         trade_id = row.get('Trade_ID')
         
-        is_buy = any(word in action for word in ["買入", "BUY", "B"])
-        is_sell = any(word in action for word in ["賣出", "SELL", "S"])
+        is_buy = any(word in action.upper() for word in ["買入", "BUY", "B"])
+        is_sell = any(word in action.upper() for word in ["賣出", "SELL", "S"])
         
+        # --- ID Management for In-Memory Calculation ---
+        # If legacy data (NaN ID), we try to assign it to active symbol cycle or create new
+        if pd.isna(trade_id):
+            if sym in active_trade_by_symbol:
+                trade_id = active_trade_by_symbol[sym]
+            else:
+                trade_id = int(ts) # Use timestamp as fallback ID for legacy start
+        
+        # --- Update Positions Dict ---
         if sym not in positions: 
             positions[sym] = {'qty': 0.0, 'avg_price': 0.0, 'last_sl': 0.0, 'trade_id': None}
         curr_pos = positions[sym]
         
+        # --- Cycle Logic ---
         if is_buy:
-            # ID 決定邏輯：如果沒有 ID，檢查是否屬於當前活躍交易，否則視為新交易 (使用 Timestamp 當 ID)
-            if pd.isna(trade_id):
-                if sym in active_trade_by_symbol:
-                    trade_id = active_trade_by_symbol[sym]
-                else:
-                    trade_id = int(ts)
-
-            # 如果目前該 Symbol 沒有活躍中的 Trade_ID，開啟新週期
+            # Check if this starts a new cycle
             if sym not in active_trade_by_symbol:
                 active_trade_by_symbol[sym] = trade_id
+                
+                # Change 3: Initialize cycle with Entry Price/SL
                 init_risk = abs(price - sl) * qty if sl > 0 else 0
                 
                 cycle_tracker[trade_id] = {
@@ -202,94 +225,99 @@ def calculate_portfolio(df):
                     'start_date': date_str,
                     'cash_flow_raw': 0.0,
                     'initial_risk_raw': init_risk,
-                    'Entry_Price': price,
-                    'Entry_SL': sl,
-                    'Strategy': row.get('Strategy', ''),
-                    'Emotion': row.get('Emotion', ''),
-                    'Market_Condition': row.get('Market_Condition', ''),
-                    'Mistake_Tag': row.get('Mistake_Tag', '')
+                    'Entry_Price': price,  # Stored explicitly
+                    'Entry_SL': sl,        # Stored explicitly
+                    'Strategy': strategy,
+                    'Emotion': emotion,
+                    'Market_Condition': mkt_cond,
+                    'Mistake_Tag': mistake
                 }
+                
+                # Update Position tracker
                 curr_pos['trade_id'] = trade_id
             
-            # 確保使用正確的 ID 更新
-            target_tid = active_trade_by_symbol[sym]
-            if target_tid in cycle_tracker:
-                cycle_tracker[target_tid]['cash_flow_raw'] -= (qty * price)
+            # Add to position
+            if trade_id in cycle_tracker:
+                cycle_tracker[trade_id]['cash_flow_raw'] -= (qty * price)
             
-            # 更新加權平均成本
+            # Update weighted average price
             total_cost_base = (curr_pos['qty'] * curr_pos['avg_price']) + (qty * price)
             new_qty = curr_pos['qty'] + qty
             if new_qty > 0: curr_pos['avg_price'] = total_cost_base / new_qty
             curr_pos['qty'] = new_qty
-            if sl > 0: curr_pos['last_sl'] = sl
+            if sl > 0: curr_pos['last_sl'] = sl # Update trailing SL
             
         elif is_sell:
-            # 嘗試找回對應的 ID
-            # 優先順序：1. 活躍表 2. 當前持倉紀錄的 ID (修復 Legacy 數據中斷問題) 3. 行數據 ID
+            # Retrieve active trade_id for this symbol
             active_tid = active_trade_by_symbol.get(sym)
-            pos_tid = curr_pos.get('trade_id')
             
-            target_tid = active_tid if active_tid else (pos_tid if pos_tid else trade_id)
-
-            # 只有當我們找到了有效的週期 ID，才進行計算
-            if target_tid and target_tid in cycle_tracker:
+            # Logic protection: if selling but no active ID (legacy mismatch), skip or try row ID
+            current_tid = active_tid if active_tid else trade_id
+            
+            if current_tid and current_tid in cycle_tracker:
                 sell_qty = min(qty, curr_pos['qty'])
-                cycle_tracker[target_tid]['cash_flow_raw'] += (sell_qty * price)
+                cycle_tracker[current_tid]['cash_flow_raw'] += (sell_qty * price)
                 
-                # 已實現損益計算：(賣出價 - 該部位平均成本) * 賣出數量
-                pnl_item_raw = (price - curr_pos['avg_price']) * sell_qty
-                realized_pnl_hkd_item = get_hkd_value(sym, pnl_item_raw)
+                realized_pnl_hkd_item = get_hkd_value(sym, (price - curr_pos['avg_price']) * sell_qty)
                 total_realized_pnl_hkd += realized_pnl_hkd_item
                 running_pnl_hkd += realized_pnl_hkd_item
                 
                 curr_pos['qty'] -= sell_qty
                 if sl > 0: curr_pos['last_sl'] = sl
                 
-                # 如果持倉清空，結算此交易
+                # Check for Close
                 if curr_pos['qty'] < 0.0001:
-                    c_data = cycle_tracker[target_tid]
-                    d1 = datetime.strptime(c_data['start_date'], '%Y-%m-%d')
+                    cycle_data = cycle_tracker[current_tid]
+                    d1 = datetime.strptime(cycle_data['start_date'], '%Y-%m-%d')
                     d2 = datetime.strptime(date_str, '%Y-%m-%d')
                     
-                    pnl_raw = c_data['cash_flow_raw']
-                    init_risk = c_data['initial_risk_raw']
+                    pnl_raw = cycle_data['cash_flow_raw']
+                    
+                    # Change 3: Use explicitly stored initial risk
+                    init_risk = cycle_data['initial_risk_raw']
                     trade_r = (pnl_raw / init_risk) if init_risk > 0 else None
                     
                     completed_trades.append({
-                        "Trade_ID": target_tid,
+                        "Trade_ID": current_tid,
                         "Exit_Date": date_str, 
-                        "Entry_Date": c_data['start_date'], 
+                        "Entry_Date": cycle_data['start_date'], 
                         "Symbol": sym, 
                         "PnL_Raw": pnl_raw, 
                         "PnL_HKD": get_hkd_value(sym, pnl_raw),
                         "Duration_Days": float((d2 - d1).days), 
                         "Trade_R": trade_r,
-                        "Strategy": c_data['Strategy'],
-                        "Emotion": c_data['Emotion'],
-                        "Market_Condition": c_data['Market_Condition'],
-                        "Mistake_Tag": c_data['Mistake_Tag']
+                        "Strategy": cycle_data['Strategy'],
+                        "Emotion": cycle_data['Emotion'],
+                        "Market_Condition": cycle_data['Market_Condition'],
+                        "Mistake_Tag": cycle_data['Mistake_Tag']
                     })
-                    if sym in active_trade_by_symbol: del active_trade_by_symbol[sym]
+                    
+                    # Clean up lookup
+                    if sym in active_trade_by_symbol:
+                        del active_trade_by_symbol[sym]
                     curr_pos['qty'] = 0
-                    # 注意：不重置 avg_price，因為如果只是浮點誤差導致未完全歸零，保留價格比較安全
-                    # 但因為 qty 歸零，下次買入會自動重置 avg_price
                     
         equity_curve.append({"Date": date_str, "Cumulative PnL": running_pnl_hkd})
 
+    # Prepare return data
+    # Change 3: Inject Entry data into active positions for display
     final_active_positions = {}
     for k, v in positions.items():
         if v['qty'] > 0.0001:
             tid = active_trade_by_symbol.get(k)
-            # 如果活躍表丟失，嘗試從持倉找回
-            if not tid: tid = v.get('trade_id')
-            
+            entry_p = 0
+            entry_sl = 0
             if tid and tid in cycle_tracker:
-                v['Entry_Price'] = cycle_tracker[tid]['Entry_Price']
-                v['Entry_SL'] = cycle_tracker[tid]['Entry_SL']
+                entry_p = cycle_tracker[tid]['Entry_Price']
+                entry_sl = cycle_tracker[tid]['Entry_SL']
+            
+            v['Entry_Price'] = entry_p
+            v['Entry_SL'] = entry_sl
             final_active_positions[k] = v
 
     comp_df = pd.DataFrame(completed_trades)
     
+    # Calculate global stats (can be filtered later)
     exp_hkd, exp_r, avg_dur = 0, 0, 0
     if not comp_df.empty:
         wins = comp_df[comp_df['PnL_HKD'] > 0]
@@ -322,6 +350,7 @@ def get_live_prices(symbols_list):
 # --- 3. UI 渲染 ---
 df = load_data()
 
+# Sidebar: Trade Form
 with st.sidebar:
     st.header("⚡ 執行面板")
     with st.form("trade_form", clear_on_submit=True):
@@ -340,42 +369,60 @@ with st.sidebar:
         if st_in == "➕ 新增...": st_in = st.text_input("輸入新策略名稱")
         emo_in = st.select_slider("心理狀態", options=["恐慌", "猶豫", "平靜", "自信", "衝動"], value="平靜")
         note_in = st.text_area("決策筆記")
+        
         img_file = st.file_uploader("📸 上傳圖表截圖", type=['png','jpg','jpeg'])
         
         if st.form_submit_button("儲存執行紀錄"):
             if s_in and q_in is not None and p_in is not None:
                 img_path = None
                 if img_file is not None:
+                    if not os.path.exists("images"): os.makedirs("images")
                     ts_str = str(int(time.time()))
                     img_path = os.path.join("images", f"{ts_str}_{img_file.name}")
-                    with open(img_path, "wb") as f: f.write(img_file.getbuffer())
+                    with open(img_path, "wb") as f:
+                        f.write(img_file.getbuffer())
                 
-                is_active, active_tid = get_symbol_state(df, s_in)
+                # Change 1: Generate/Retrieve Trade_ID Logic
+                is_active_symbol, active_trade_id = get_symbol_state(df, s_in)
+                final_trade_id = None
                 
-                # 自動判斷 ID：如果是新開倉或無活躍交易，生成新 ID；否則沿用舊 ID
-                if not is_sell: # BUY
-                    final_tid = active_tid if (is_active and active_tid) else int(time.time())
-                else: # SELL
-                    final_tid = active_tid if active_tid else int(time.time())
+                if not is_sell: # BUY Logic
+                    if is_active_symbol and active_trade_id:
+                        final_trade_id = active_trade_id # Scale in to existing
+                    else:
+                        final_trade_id = int(time.time()) # New Cycle
+                else: # SELL Logic
+                    if is_active_symbol and active_trade_id:
+                        final_trade_id = active_trade_id
+                    else:
+                        final_trade_id = int(time.time()) # Fallback (shouldn't happen logic wise but prevents crash)
 
                 save_transaction({
                     "Date": d_in.strftime('%Y-%m-%d'), "Symbol": s_in, "Action": act_in, 
                     "Strategy": clean_strategy(st_in), "Price": p_in, "Quantity": q_in, 
                     "Stop_Loss": sl_in if sl_in is not None else 0.0, "Fees": 0, 
-                    "Emotion": emo_in, "Risk_Reward": 0, "Notes": note_in, "Timestamp": int(time.time()), 
-                    "Market_Condition": mkt_cond, "Mistake_Tag": mistake_in, "Img": img_path, "Trade_ID": final_tid
+                    "Emotion": emo_in, "Risk_Reward": 0, 
+                    "Notes": note_in, "Timestamp": int(time.time()), 
+                    "Market_Condition": mkt_cond, "Mistake_Tag": mistake_in,
+                    "Img": img_path,
+                    "Trade_ID": final_trade_id
                 })
-                st.success(f"已儲存 {s_in}"); time.sleep(0.5); st.rerun()
+                st.success(f"已儲存 {s_in} (Trade ID: {final_trade_id})"); time.sleep(0.5); st.rerun()
 
-active_pos, realized_pnl_total_hkd, comp_trades_df, equity_df, exp_hkd, exp_r, avg_dur = calculate_portfolio(df)
+# Run Calculation on FULL dataframe first
+active_pos, realized_pnl_total_hkd, completed_trades_df, equity_df, exp_val, exp_r_val, avg_dur_val = calculate_portfolio(df)
 
 t1, t2, t3, t4, t5 = st.tabs(["📈 績效矩陣", "🔥 持倉 & 報價", "🔄 交易重播", "🧠 心理 & 歷史", "🛠️ 數據管理"])
 
 with t1:
     st.subheader("📊 績效概覽")
-    time_frame = st.selectbox("統計時間範圍", ["全部記錄", "本週 (This Week)", "本月 (This Month)", "最近 3個月 (Last 3M)", "今年 (YTD)"])
+    time_options = ["全部記錄", "本週 (This Week)", "本月 (This Month)", "最近 3個月 (Last 3M)", "今年 (YTD)"]
+    time_frame = st.selectbox("統計時間範圍", time_options, index=0)
     
-    f_comp = comp_trades_df.copy()
+    # Change 4: Filter COMPLETED trades where BOTH Entry and Exit are in range
+    # We do NOT filter the input DF to calculate_portfolio anymore to preserve cycle logic
+    f_comp = completed_trades_df.copy()
+    
     if not f_comp.empty and time_frame != "全部記錄":
         f_comp['Entry_DT'] = pd.to_datetime(f_comp['Entry_Date'])
         f_comp['Exit_DT'] = pd.to_datetime(f_comp['Exit_Date'])
@@ -392,15 +439,20 @@ with t1:
         elif "3個月" in time_frame: 
             start_date = today - timedelta(days=90)
             
+        # Strict Filter: Entry >= Start AND Exit >= Start (implies strictly inside period if we consider 'now' as end)
         if start_date:
             f_comp = f_comp[(f_comp['Entry_DT'] >= start_date) & (f_comp['Exit_DT'] >= start_date)]
 
+    # Re-calculate metrics based on filtered completed trades
     f_pnl = f_comp['PnL_HKD'].sum() if not f_comp.empty else 0
     f_dur = f_comp['Duration_Days'].mean() if not f_comp.empty else 0
+    
     trade_count = len(f_comp)
     win_r = (len(f_comp[f_comp['PnL_HKD'] > 0]) / trade_count * 100) if trade_count > 0 else 0
     
-    f_exp, f_exp_r = 0, 0
+    # Recalculate Expectancy for filtered set
+    f_exp = 0
+    f_exp_r = 0
     if not f_comp.empty:
         wins = f_comp[f_comp['PnL_HKD'] > 0]
         losses = f_comp[f_comp['PnL_HKD'] <= 0]
@@ -408,9 +460,11 @@ with t1:
         avg_win_c = wins['PnL_HKD'].mean() if not wins.empty else 0
         avg_loss_c = abs(losses['PnL_HKD'].mean()) if not losses.empty else 0
         f_exp = (wr_calc * avg_win_c) - ((1-wr_calc) * avg_loss_c)
+        
         valid_r_f = f_comp[f_comp['Trade_R'].notna()]
         f_exp_r = valid_r_f['Trade_R'].mean() if not valid_r_f.empty else 0
     
+    # Filter Equity Curve for display (just visual trimming)
     f_eq = equity_df.copy()
     if not f_eq.empty and "Date" in f_eq.columns and time_frame != "全部記錄" and start_date:
          f_eq['Date_DT'] = pd.to_datetime(f_eq['Date'])
@@ -458,21 +512,29 @@ with t2:
     for s, d in active_pos.items():
         now = live_prices.get(s)
         qty, avg_p, last_sl = d['qty'], d['avg_price'], d['last_sl']
+        
+        # Change 3: Use Stored Entry Price/SL for metrics
         entry_p = d.get('Entry_Price', avg_p)
         entry_sl = d.get('Entry_SL', 0)
         
         un_pnl = (now - avg_p) * qty if now else 0
         roi = (un_pnl / (qty * avg_p) * 100) if (now and avg_p != 0) else 0
         sl_risk_raw = (now - last_sl) * qty if (now and last_sl > 0) else 0
+        
+        # Recalculate based on Entry
         init_risk = abs(entry_p - entry_sl) * qty if entry_sl > 0 else 0
         curr_risk = sl_risk_raw
+        
+        # Current R based on Initial Risk (The correct way)
         curr_r = (un_pnl / init_risk) if (now and init_risk > 0) else 0
         
         processed_p_data.append({
             "代號": s, "持股數": f"{qty:,.0f}", "平均成本": f"{avg_p:,.2f}", 
             "現價": f"{now:,.2f}" if now else "N/A", "當前止損": f"{last_sl:,.2f}", 
-            "初始風險": f"{init_risk:,.2f}", "當前風險": f"{curr_risk:,.2f}",
-            "當前R": f"{curr_r:.2f}R", "未實現損益": f"{un_pnl:,.2f}", "報酬%": roi
+            "初始風險": f"{init_risk:,.2f}",
+            "當前風險": f"{curr_risk:,.2f}",
+            "當前R": f"{curr_r:.2f}R",
+            "未實現損益": f"{un_pnl:,.2f}", "報酬%": roi
         })
     if processed_p_data: 
         st.dataframe(pd.DataFrame(processed_p_data), column_config={"報酬%": st.column_config.ProgressColumn("報酬%", format="%.2f%%", min_value=-20, max_value=20, color="green" if 0>=0 else "red")}, hide_index=True, use_container_width=True)
@@ -491,19 +553,22 @@ with t3:
             fig.add_trace(go.Scatter(x=[pd.to_datetime(row['Date'])], y=[row['Price']], mode='markers+text', marker=dict(size=15, color='orange', symbol='star'), text=["執行"], textposition="top center"))
             fig.update_layout(title=f"{row['Symbol']} K線圖回顧", xaxis_rangeslider_visible=False, height=500)
             st.plotly_chart(fig, use_container_width=True)
+            
             if pd.notnull(row['Img']) and os.path.exists(row['Img']):
                 st.image(row['Img'], caption="交易當下截圖")
 
 with t4:
     st.subheader("📜 心理 & 歷史分析")
-    if not comp_trades_df.empty:
+    if not completed_trades_df.empty:
         c1, c2 = st.columns(2)
-        valid_r = comp_trades_df[comp_trades_df['Trade_R'].notna()]
+        valid_r = completed_trades_df[completed_trades_df['Trade_R'].notna()]
+        
         with c1:
             mistake_r = valid_r[valid_r['Mistake_Tag'] != "None"].groupby('Mistake_Tag')['Trade_R'].mean().reset_index()
             if not mistake_r.empty:
                 fig_m = px.bar(mistake_r, x='Mistake_Tag', y='Trade_R', title="平均 R 乘數 (按錯誤標籤)", color='Trade_R', color_continuous_scale='RdYlGn')
                 st.plotly_chart(fig_m, use_container_width=True)
+        
         with c2:
             emo_r = valid_r.groupby('Emotion')['Trade_R'].mean().reset_index()
             if not emo_r.empty:
@@ -514,7 +579,7 @@ with t4:
         with st.expander("查看詳細分類統計", expanded=False):
             group_by = st.selectbox("分組依據", ["Strategy", "Market_Condition", "Mistake_Tag", "Emotion"])
             if group_by:
-                agg_df = comp_trades_df.groupby(group_by).agg(
+                agg_df = completed_trades_df.groupby(group_by).agg(
                     Count=('Symbol', 'count'),
                     Win_Rate=('PnL_HKD', lambda x: (x > 0).mean() * 100),
                     Avg_R=('Trade_R', 'mean'),
@@ -528,18 +593,22 @@ with t4:
                 agg_df['Avg_R'] = agg_df['Avg_R'].map('{:.2f}R'.format)
                 agg_df['Avg_HKD'] = agg_df['Avg_HKD'].map('${:,.0f}'.format)
                 agg_df['Profit Factor'] = agg_df['Profit Factor'].map('{:.2f}'.format)
+                
                 st.dataframe(agg_df[[group_by, 'Count', 'Win_Rate', 'Avg_R', 'Avg_HKD', 'Profit Factor']], hide_index=True, use_container_width=True)
 
     if not df.empty:
         st.divider()
         hist_df = df.sort_values("Timestamp", ascending=False).copy()
         hist_df = hist_df.rename(columns={"Stop_Loss": "執行止損", "Price": "成交價", "Quantity": "股數"})
+        
         hist_df['截圖'] = hist_df['Img'].apply(lambda x: "🖼️" if pd.notnull(x) and os.path.exists(x) else "")
+        
         cols = ["Date", "Symbol", "Action", "Strategy", "成交價", "股數", "執行止損", "Emotion", "Mistake_Tag", "截圖", "Trade_ID"]
         st.dataframe(hist_df[cols], use_container_width=True, hide_index=True)
 
 with t5:
     st.subheader("🛠️ 數據管理")
+    
     conn_status = get_data_connection()
     if conn_status:
         st.success("🟢 已連接至 Google Sheets (雲端同步中)")
@@ -554,7 +623,9 @@ with t5:
                 new_data = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
                 if 'Symbol' in new_data.columns: new_data['Symbol'] = new_data['Symbol'].apply(format_symbol)
                 if 'Timestamp' not in new_data.columns: new_data['Timestamp'] = int(time.time())
+                # Ensure compatibility for bulk upload
                 if 'Trade_ID' not in new_data.columns: new_data['Trade_ID'] = pd.NA
+                
                 df = pd.concat([df, new_data], ignore_index=True); save_all_data(df)
                 st.success("匯入成功！"); st.rerun()
             except Exception as e: st.error(f"匯入失敗: {e}")
