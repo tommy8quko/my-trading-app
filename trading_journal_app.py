@@ -241,7 +241,6 @@ def calculate_portfolio(df):
         p['entry_price'] = cycle_tracker[tid]['Entry_Price']
         p['entry_sl'] = cycle_tracker[tid]['Entry_SL']
 
-    # 補回：盈虧比與 MDD 計算
     exp_hkd, exp_r, avg_dur, profit_loss_ratio, max_drawdown = 0, 0, 0, 0, 0
     if not comp_df.empty:
         wins, losses = comp_df[comp_df['PnL_HKD'] > 0], comp_df[comp_df['PnL_HKD'] <= 0]
@@ -250,7 +249,6 @@ def calculate_portfolio(df):
         avg_loss = abs(losses['PnL_HKD'].mean()) if not losses.empty else 0
         exp_hkd = (wr * avg_win) - ((1-wr) * avg_loss)
         
-        # 盈虧比計算
         if avg_loss > 0:
             profit_loss_ratio = avg_win / avg_loss
 
@@ -258,7 +256,6 @@ def calculate_portfolio(df):
         exp_r = valid_r_trades['Trade_R'].mean() if not valid_r_trades.empty else 0
         avg_dur = comp_df['Duration_Days'].mean()
         
-        # MDD 計算
         if equity_curve:
             eq_series = pd.DataFrame(equity_curve)['Cumulative PnL']
             rolling_max = eq_series.cummax()
@@ -339,7 +336,7 @@ with st.sidebar:
                 })
                 st.success(f"已儲存 {s_in}"); time.sleep(0.5); st.rerun()
 
-# 計算主要數據 (補回 MDD 與 PL Ratio 的解包)
+# 計算主要數據
 active_pos, realized_pnl_total_hkd, completed_trades_df, equity_df, exp_val, exp_r_val, avg_dur_val, pl_ratio_val, mdd_val = calculate_portfolio(df)
 
 t1, t2, t3, t4, t5 = st.tabs(["📈 績效矩陣", "🔥 持倉 & 報價", "🔄 交易重播", "🧠 心理 & 歷史", "🛠️ 數據管理"])
@@ -372,7 +369,6 @@ with t1:
     win_r = (len(filtered_comp[filtered_comp['PnL_HKD'] > 0]) / trade_count * 100) if trade_count > 0 else 0
     f_dur = filtered_comp['Duration_Days'].mean() if not filtered_comp.empty else 0
     
-    # 補回：顯示更多指標
     m1, m2, m3, m4, m5, m6 = st.columns(6)
     m1.metric("已實現損益 (HKD)", f"${f_pnl:,.2f}")
     m2.metric("期望值 (R)", f"{exp_r_val:.2f}R")
@@ -414,30 +410,65 @@ with t1:
             """
             st.markdown(get_ai_response(prompt))
 
-    # 修復錯誤：使用正確的變數名稱 completed_trades_df
-    if not completed_trades_df.empty:
+    # --- 還原交易排行榜格式 ---
+    if not filtered_comp.empty: # 使用過濾後的時間段數據
         st.divider()
-        st.subheader("🏆 交易排行榜")
-        col_l, col_r = st.columns(2)
-        with col_l:
-            st.write("**策略表現排行**")
-            st.dataframe(completed_trades_df.groupby("Strategy")["PnL_HKD"].sum().sort_values(ascending=False), use_container_width=True)
-        with col_r:
-            st.write("**標的獲利排行**")
-            st.dataframe(completed_trades_df.groupby("Symbol")["PnL_HKD"].sum().sort_values(ascending=False), use_container_width=True)
+        st.subheader("🏆 週期成交排行榜")
+        display_trades = filtered_comp.copy()
+        display_trades['原始損益'] = display_trades.apply(lambda x: f"{get_currency_symbol(x['Symbol'])} {x['PnL_Raw']:,.2f}", axis=1)
+        display_trades['HKD 損益'] = display_trades['PnL_HKD'].apply(lambda x: f"${x:,.2f}")
+        display_trades['R 乘數'] = display_trades['Trade_R'].apply(lambda x: f"{x:.2f}R" if pd.notnull(x) else "N/A")
+        display_trades = display_trades.rename(columns={"Exit_Date": "出場日期", "Symbol": "代號"})
+        
+        r1, r2 = st.columns(2)
+        with r1:
+            st.markdown("##### 🟢 Top 獲利")
+            st.dataframe(display_trades.sort_values(by="PnL_HKD", ascending=False).head(5)[['出場日期', '代號', '原始損益', 'HKD 損益', 'R 乘數']], hide_index=True, use_container_width=True)
+        with r2:
+            st.markdown("##### 🔴 Top 虧損")
+            st.dataframe(display_trades.sort_values(by="PnL_HKD", ascending=True).head(5)[['出場日期', '代號', '原始損益', 'HKD 損益', 'R 乘數']], hide_index=True, use_container_width=True)
 
 with t2:
-    st.markdown("### 🟢 當前持倉")
+    st.markdown("### 🟢 持倉概覽")
     if active_pos:
         live_prices = get_live_prices(list(active_pos.keys()))
         processed_p_data = []
         for s, d in active_pos.items():
             now = live_prices.get(s)
-            un_pnl = (now - d['avg_price']) * d['qty'] if now else 0
+            qty, avg_p, last_sl = d['qty'], d['avg_price'], d['last_sl']
+            entry_p, entry_sl = d.get('entry_price', avg_p), d.get('entry_sl', 0)
+            
+            un_pnl = (now - avg_p) * qty if now else 0
+            roi = (un_pnl / (qty * avg_p) * 100) if (now and avg_p != 0) else 0
+            
+            init_risk = abs(entry_p - entry_sl) * qty if entry_sl > 0 else 0
+            curr_risk = (now - last_sl) * qty if (now and last_sl > 0) else 0
+            curr_r = (un_pnl / init_risk) if (now and init_risk > 0) else 0
+            
             processed_p_data.append({
-                "代號": s, "持股": d['qty'], "成本價": d['avg_price'], "現價": now, "未實現損益": un_pnl
+                "代號": s, "持股數": f"{qty:,.0f}", "平均成本": f"{avg_p:,.2f}", 
+                "現價": f"{now:,.2f}" if now else "N/A", "當前止損": f"{last_sl:,.2f}", 
+                "初始風險": f"{init_risk:,.2f}",
+                "當前風險": f"{curr_risk:,.2f}",
+                "當前R": f"{curr_r:.2f}R",
+                "未實現損益": f"{un_pnl:,.2f}", "報酬%": roi
             })
-        st.dataframe(pd.DataFrame(processed_p_data), column_config={"未實現損益": st.column_config.NumberColumn(format="$%.2f")}, use_container_width=True)
+        
+        st.dataframe(
+            pd.DataFrame(processed_p_data), 
+            column_config={
+                "報酬%": st.column_config.ProgressColumn(
+                    "報酬%", 
+                    format="%.2f%%", 
+                    min_value=-20, 
+                    max_value=20, 
+                    color="green" if 0>=0 else "red" # 簡化邏輯，Streamlit會根據數值自動渲染
+                )
+            }, 
+            hide_index=True, 
+            use_container_width=True
+        )
+        if st.button("🔄 刷新即時報價", use_container_width=True): st.cache_data.clear(); st.rerun()
     else:
         st.info("目前無持倉部位")
 
