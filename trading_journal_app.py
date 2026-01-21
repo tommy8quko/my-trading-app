@@ -22,12 +22,12 @@ if not os.path.exists("images"):
 
 st.set_page_config(page_title="TradeMaster Pro UI", layout="wide")
 
-# --- AI 配置 (更新模型為 gemini-2.5-flash-lite) ---
+# --- AI 配置 (更新模型為 gemini-3-flash-preview) ---
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
     # 根據您的需求更新模型名稱
-    model = genai.GenerativeModel('gemini-2.5-flash-lite')
+    model = genai.GenerativeModel('gemini-3-flash-preview')
 
 def get_ai_response(prompt):
     """呼叫 Gemini API 獲取分析結果，加入指數退避重試機制"""
@@ -588,3 +588,4 @@ with t5:
         save_all_data(pd.DataFrame(columns=df.columns))
         st.success("數據已清空")
         st.rerun()
+
