@@ -22,22 +22,33 @@ if not os.path.exists("images"):
 
 st.set_page_config(page_title="TradeMaster Pro UI", layout="wide")
 
-# --- AI 配置 ---
+# --- AI 配置 (修復 404 錯誤與優化) ---
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
+    # 使用正確的模型名稱，通常 gemini-1.5-flash 是最穩定的選擇
     model = genai.GenerativeModel('gemini-1.5-flash')
 
 def get_ai_response(prompt):
-    """呼叫 Gemini API 獲取分析結果"""
+    """呼叫 Gemini API 獲取分析結果，加入指數退避重試機制"""
     if not GEMINI_API_KEY:
         return "⚠️ 請先在 Secrets 設定 GEMINI_API_KEY 才能使用 AI 功能。"
-    try:
-        with st.spinner("🤖 AI 交易教練正在分析數據中..."):
-            response = model.generate_content(prompt)
-            return response.text
-    except Exception as e:
-        return f"❌ AI 分析失敗: {str(e)}"
+    
+    max_retries = 5
+    for i in range(max_retries):
+        try:
+            with st.spinner(f"🤖 AI 交易教練正在分析中... (第 {i+1} 次嘗試)"):
+                response = model.generate_content(prompt)
+                return response.text
+        except Exception as e:
+            if "404" in str(e):
+                return "❌ AI 模型找不到 (404)。這通常是 API Key 權限問題或模型名稱變更，請檢查您的 Google AI Studio 設定。"
+            if i < max_retries - 1:
+                wait_time = 2 ** i
+                time.sleep(wait_time)
+                continue
+            else:
+                return f"❌ AI 分析最終失敗: {str(e)}"
 
 # --- 資料讀取層 ---
 def get_data_connection():
@@ -380,7 +391,7 @@ with t1:
     if not equity_df.empty:
         st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", title="累計損益曲線"), use_container_width=True)
     
-    # --- AI 週期性總結 (新增) ---
+    # --- AI 週期性總結 ---
     st.divider()
     st.subheader("🤖 AI 週期性檢討 (Beta)")
     if st.button("生成本期 AI 洞察報告"):
@@ -462,7 +473,7 @@ with t2:
                     format="%.2f%%", 
                     min_value=-20, 
                     max_value=20, 
-                    color="green" if 0>=0 else "red" # 簡化邏輯，Streamlit會根據數值自動渲染
+                    color="green"
                 )
             }, 
             hide_index=True, 
@@ -504,9 +515,9 @@ with t3:
             執行數據: {trade_context}
             最終結果 (若已平倉): {related_outcome}
             
-            請評估 (繁體中文):
-            1. **策略一致性**：進場點是否符合 {row.get('Strategy')} 的邏輯？(檢查 Price 與 action)
-            2. **風險管理**：如果已知結果，R 值 ({related_outcome.get('Trade_R', 'N/A')}) 是否合理？
+            請評估 (繁體中文)：
+            1. **策略一致性**：進場點是否符合 {row.get('Strategy')} 的邏輯？
+            2. **風險管理**：R 值 ({related_outcome.get('Trade_R', 'N/A')}) 是否合理？
             3. **心理帳戶**：標記為 '{row.get('Emotion')}' 且錯誤標籤為 '{row.get('Mistake_Tag')}'，這反映了什麼心態？
             4. **改進建議**：下一次遇到類似情境該怎麼做？
             """
@@ -525,25 +536,6 @@ with t4:
             emo_r = valid_r.groupby('Emotion')['Trade_R'].mean().reset_index()
             if not emo_r.empty:
                 st.plotly_chart(px.bar(emo_r, x='Emotion', y='Trade_R', title="平均 R 乘數 (按情緒)", color='Trade_R', color_continuous_scale='RdYlGn'), use_container_width=True)
-
-        st.markdown("### 🔍 多維度績效分析")
-        with st.expander("查看詳細分類統計", expanded=False):
-            group_by = st.selectbox("分組依據", ["Strategy", "Market_Condition", "Mistake_Tag", "Emotion"])
-            if group_by:
-                agg_df = completed_trades_df.groupby(group_by).agg(
-                    Count=('Symbol', 'count'),
-                    Win_Rate=('PnL_HKD', lambda x: (x > 0).mean() * 100),
-                    Avg_R=('Trade_R', 'mean'),
-                    Avg_HKD=('PnL_HKD', 'mean'),
-                    Gross_Win=('PnL_HKD', lambda x: x[x > 0].sum()),
-                    Gross_Loss=('PnL_HKD', lambda x: abs(x[x <= 0].sum()))
-                ).reset_index()
-                agg_df['Profit Factor'] = agg_df['Gross_Win'] / agg_df['Gross_Loss'].replace(0, 1)
-                agg_df['Win_Rate'] = agg_df['Win_Rate'].map('{:.1f}%'.format)
-                agg_df['Avg_R'] = agg_df['Avg_R'].map('{:.2f}R'.format)
-                agg_df['Avg_HKD'] = agg_df['Avg_HKD'].map('${:,.0f}'.format)
-                agg_df['Profit Factor'] = agg_df['Profit Factor'].map('{:.2f}'.format)
-                st.dataframe(agg_df[[group_by, 'Count', 'Win_Rate', 'Avg_R', 'Avg_HKD', 'Profit Factor']], hide_index=True, use_container_width=True)
 
     if not df.empty:
         st.divider()
