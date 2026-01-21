@@ -8,12 +8,15 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import io
-# 新增 Google Sheets 連線庫
+
+# Google Sheets 連線庫
 from streamlit_gsheets import GSheetsConnection
-# 新增 Google Gemini AI 庫
+
+# Google Gemini AI 庫
 import google.generativeai as genai
 
 # --- 1. 核心配置與初始化 ---
+
 FILE_NAME = "trade_ledger_v_final.csv"
 USD_HKD_RATE = 7.8
 
@@ -22,35 +25,65 @@ if not os.path.exists("images"):
 
 st.set_page_config(page_title="TradeMaster Pro UI", layout="wide")
 
-# --- AI 配置 (更新模型為 gemini-3-flash-preview) ---
+# --- AI 配置 (整合最新 Gemini 3 & 多模型備援機制) ---
+
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
-if GEMINI_API_KEY:
+
+def get_ai_model():
+    """
+    根據官方最新指引初始化模型。
+    參考: https://ai.google.dev/gemini-api/docs/quickstart
+    """
+    if not GEMINI_API_KEY:
+        return None
+    
     genai.configure(api_key=GEMINI_API_KEY)
-    # 根據您的需求更新模型名稱
-    model = genai.GenerativeModel('gemini-3-flash-preview')
+    
+    # 按優先級排列的模型清單，首選最新的 gemini-3-flash-preview
+    candidate_models = [
+        'gemini-3-flash-preview',
+        'gemini-2.5-flash',
+        'gemini-2.5-flash-lite',
+        'gemini-2.0-flash-lite'
+    ]
+    
+    for model_name in candidate_models:
+        try:
+            m = genai.GenerativeModel(model_name)
+            # 進行極小規模測試以確認 API Key 權限與模型存在
+            # 這是防止 404 或 403 錯誤導致 App 崩潰的關鍵
+            m.generate_content("ping", generation_config={"max_output_tokens": 1})
+            return m
+        except Exception:
+            continue
+    return None
+
+# 初始化模型
+model = get_ai_model()
 
 def get_ai_response(prompt):
-    """呼叫 Gemini API 獲取分析結果，加入指數退避重試機制"""
+    """呼叫 Gemini API 獲取分析結果，加入重試機制"""
     if not GEMINI_API_KEY:
-        return "⚠️ 請先在 Secrets 設定 GEMINI_API_KEY 才能使用 AI 功能。"
+        return "⚠️ 請先在 Streamlit Secrets 設定 GEMINI_API_KEY 才能使用 AI 功能。"
     
-    max_retries = 5
+    if model is None:
+        return "❌ 無法初始化 AI 模型。請確認您的 API Key 是否正確，以及是否具有 gemini-3 或 1.5 模型的存取權限。"
+    
+    max_retries = 3
     for i in range(max_retries):
         try:
-            with st.spinner(f"🤖 AI 交易教練正在分析中... (第 {i+1} 次嘗試)"):
+            with st.spinner(f"🤖 AI 交易教練正在分析中..."):
                 response = model.generate_content(prompt)
                 return response.text
         except Exception as e:
-            if "404" in str(e):
-                return "❌ AI 模型找不到 (404)。這通常是 API Key 權限問題或模型名稱變更，請檢查您的 Google AI Studio 設定。"
             if i < max_retries - 1:
-                wait_time = 2 ** i
-                time.sleep(wait_time)
+                time.sleep(2 ** i) # 指數退避重試
                 continue
             else:
-                return f"❌ AI 分析最終失敗: {str(e)}"
+                return f"❌ AI 分析失敗: {str(e)}"
 
 # --- 資料讀取層 ---
+
 def get_data_connection():
     try:
         return st.connection("gsheets", type=GSheetsConnection)
@@ -94,7 +127,6 @@ def load_data():
             df = pd.read_csv(FILE_NAME)
         except:
             return pd.DataFrame()
-
     if df.empty: return df
     
     # 數據類型轉換
@@ -138,6 +170,7 @@ def get_currency_symbol(symbol):
     return "$"
 
 # --- 2. 核心計算邏輯 ---
+
 @st.cache_data(ttl=60)
 def calculate_portfolio(df):
     if df.empty: return {}, 0, pd.DataFrame(), pd.DataFrame(), 0, 0, 0, 0, 0
@@ -156,18 +189,16 @@ def calculate_portfolio(df):
         sym = format_symbol(row['Symbol']) 
         action = str(row['Action']) if pd.notnull(row['Action']) else ""
         if not sym or not action: continue
-
         qty, price, sl = float(row['Quantity']), float(row['Price']), float(row['Stop_Loss'])
         date_str = row['Date']
         
         t_id = row.get('Trade_ID')
         if pd.isna(t_id) or t_id == "N/A":
             t_id = f"LEGACY_{sym}" 
-
         is_buy = any(word in action.upper() for word in ["買入", "BUY", "B"])
         is_sell = any(word in action.upper() for word in ["賣出", "SELL", "S"])
-
         current_trade_id = None
+
         if is_buy:
             if sym in active_trade_by_symbol:
                 current_trade_id = active_trade_by_symbol[sym]
@@ -247,12 +278,14 @@ def calculate_portfolio(df):
 
     comp_df = pd.DataFrame(completed_trades)
     active_output = {s: p for s, p in positions.items() if s in active_trade_by_symbol}
+
     for s, p in active_output.items():
         tid = active_trade_by_symbol[s]
         p['entry_price'] = cycle_tracker[tid]['Entry_Price']
         p['entry_sl'] = cycle_tracker[tid]['Entry_SL']
 
     exp_hkd, exp_r, avg_dur, profit_loss_ratio, max_drawdown = 0, 0, 0, 0, 0
+
     if not comp_df.empty:
         wins, losses = comp_df[comp_df['PnL_HKD'] > 0], comp_df[comp_df['PnL_HKD'] <= 0]
         wr = len(wins) / len(comp_df)
@@ -262,7 +295,7 @@ def calculate_portfolio(df):
         
         if avg_loss > 0:
             profit_loss_ratio = avg_win / avg_loss
-
+        
         valid_r_trades = comp_df[comp_df['Trade_R'].notna()]
         exp_r = valid_r_trades['Trade_R'].mean() if not valid_r_trades.empty else 0
         avg_dur = comp_df['Duration_Days'].mean()
@@ -290,6 +323,7 @@ def get_live_prices(symbols_list):
     except: return {}
 
 # --- 3. UI 渲染 ---
+
 df = load_data()
 
 # Sidebar: Trade Form
@@ -354,6 +388,7 @@ t1, t2, t3, t4, t5 = st.tabs(["📈 績效矩陣", "🔥 持倉 & 報價", "🔄
 
 with t1:
     st.subheader("📊 績效概覽")
+    # 保留原本的篩選功能
     time_frame = st.selectbox("統計時間範圍", ["全部記錄", "本週 (This Week)", "本月 (This Month)", "最近 3個月 (Last 3M)", "今年 (YTD)"], index=0)
     
     filtered_comp = completed_trades_df.copy()
@@ -391,38 +426,25 @@ with t1:
     if not equity_df.empty:
         st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", title="累計損益曲線"), use_container_width=True)
     
-    # --- AI 週期性總結 ---
+    # --- AI 交易教練洞察 (整合新版 Prompt) ---
     st.divider()
-    st.subheader("🤖 AI 週期性檢討 (Beta)")
-    if st.button("生成本期 AI 洞察報告"):
+    st.subheader("🤖 AI 交易教練洞察 (Gemini 3)")
+    if st.button("生成本期 AI 檢討報告"):
         if filtered_comp.empty:
-            st.warning("所選時間範圍內無交易數據，無法分析。")
+            st.warning("目前無已平倉數據供 AI 分析。")
         else:
-            stats_summary = {
-                "TimeFrame": time_frame,
-                "Total_PnL": f"${f_pnl:,.2f}",
-                "Win_Rate": f"{win_r:.1f}%",
-                "Total_Trades": trade_count,
-                "Profit_Factor": f"{pl_ratio_val:.2f}",
-                "Strategies": filtered_comp['Strategy'].value_counts().to_dict(),
-                "Mistakes": filtered_comp['Mistake_Tag'].value_counts().to_dict(),
-                "Top_Losses": filtered_comp.sort_values("PnL_HKD").head(3)[['Symbol', 'PnL_HKD', 'Mistake_Tag']].to_dict('records')
+            # 整合現有篩選器的數據到新版 AI 請求中
+            stats = {
+                "PnL": f_pnl, 
+                "WinRate": f"{win_r:.1f}%",
+                "ExpR": exp_r_val, 
+                "Mistakes": filtered_comp['Mistake_Tag'].value_counts().to_dict()
             }
-            prompt = f"""
-            你是一位專業交易教練。請根據以下這段時間的交易數據進行深度檢討：
-            數據摘要: {stats_summary}
-            
-            請產出以下分析 (用繁體中文 Markdown 格式)：
-            1. **週期狀態診斷**：根據勝率與盈虧，判斷目前的狀態（如：順風期、亂流期、紀律崩壞期）。
-            2. **勝率與賠率分析**：分析是勝率出了問題，還是賠率（R值）不夠。
-            3. **錯誤模式識別**：根據錯誤標籤 (Mistakes)，指出這段時間最致命的習慣。
-            4. **策略適配度**：哪種策略表現最好？哪種應該暫停？
-            5. **下週行動清單**：給出 3 個具體的改進建議（Keep, Stop, Start）。
-            """
+            prompt = f"請根據以下交易統計給出深度專業建議：{stats}。請分析錯誤標籤，並給出三個下週改進動作。請用繁體中文，語氣要像專業交易導師。"
             st.markdown(get_ai_response(prompt))
 
     # --- 還原交易排行榜格式 ---
-    if not filtered_comp.empty: # 使用過濾後的時間段數據
+    if not filtered_comp.empty:
         st.divider()
         st.subheader("🏆 週期成交排行榜")
         display_trades = filtered_comp.copy()
@@ -498,29 +520,10 @@ with t3:
             if pd.notnull(row['Img']) and os.path.exists(row['Img']):
                 st.image(row['Img'], caption="交易當下截圖")
         
-        # --- AI 單筆檢討 ---
+        # --- AI 單筆深度診斷 (整合新版 Prompt) ---
         st.divider()
-        if st.button("🤖 啟動 AI 深度檢討", key="ai_single_review"):
-            trade_context = row.to_dict()
-            t_id = row.get('Trade_ID')
-            related_outcome = {}
-            if t_id and t_id != "N/A":
-                outcome = completed_trades_df[completed_trades_df['Trade_ID'] == t_id]
-                if not outcome.empty:
-                    related_outcome = outcome.iloc[0].to_dict()
-            
-            prompt = f"""
-            你是一位嚴格的交易導師。請檢討這筆交易執行：
-            
-            執行數據: {trade_context}
-            最終結果 (若已平倉): {related_outcome}
-            
-            請評估 (繁體中文)：
-            1. **策略一致性**：進場點是否符合 {row.get('Strategy')} 的邏輯？
-            2. **風險管理**：R 值 ({related_outcome.get('Trade_R', 'N/A')}) 是否合理？
-            3. **心理帳戶**：標記為 '{row.get('Emotion')}' 且錯誤標籤為 '{row.get('Mistake_Tag')}'，這反映了什麼心態？
-            4. **改進建議**：下一次遇到類似情境該怎麼做？
-            """
+        if st.button("🤖 AI 單筆深度診斷"):
+            prompt = f"請檢討這筆交易：代號 {row['Symbol']}, 進場 {row['Price']}, 策略 {row['Strategy']}, 情緒 {row['Emotion']}, 錯誤 {row['Mistake_Tag']}。請評估其進場合理性。"
             st.markdown(get_ai_response(prompt))
 
 with t4:
@@ -536,7 +539,6 @@ with t4:
             emo_r = valid_r.groupby('Emotion')['Trade_R'].mean().reset_index()
             if not emo_r.empty:
                 st.plotly_chart(px.bar(emo_r, x='Emotion', y='Trade_R', title="平均 R 乘數 (按情緒)", color='Trade_R', color_continuous_scale='RdYlGn'), use_container_width=True)
-
     if not df.empty:
         st.divider()
         hist_df = df.sort_values("Timestamp", ascending=False).copy()
@@ -580,7 +582,7 @@ with t5:
         if b2.button("🗑️ 刪除此筆紀錄", use_container_width=True):
             df = df.drop(selected_idx).reset_index(drop=True)
             save_all_data(df); st.rerun()
-
+            
     st.divider()
     st.markdown("#### 🚨 危險區域")
     confirm_delete = st.checkbox("我了解此操作將永久刪除所有交易紀錄且無法復原")
@@ -588,4 +590,3 @@ with t5:
         save_all_data(pd.DataFrame(columns=df.columns))
         st.success("數據已清空")
         st.rerun()
-
