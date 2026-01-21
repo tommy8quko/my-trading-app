@@ -8,9 +8,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import io
-# 新增 Google Sheets 連線庫
+# Google Sheets 連線庫
 from streamlit_gsheets import GSheetsConnection
-# 新增 Google Gemini AI 庫
+# Google Gemini AI 庫
 import google.generativeai as genai
 
 # --- 1. 核心配置與初始化 ---
@@ -22,29 +22,33 @@ if not os.path.exists("images"):
 
 st.set_page_config(page_title="TradeMaster Pro UI", layout="wide")
 
-# --- AI 配置 (修復 404 錯誤：加入多模型備援機制) ---
+# --- AI 配置 (更新至 Gemini 3 & 多模型備援) ---
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 
 def get_ai_model():
-    """嘗試初始化最合適的模型，處理 404 找不到模型的問題"""
+    """
+    根據官方最新指引初始化模型。
+    參考: https://ai.google.dev/gemini-api/docs/quickstart
+    """
     if not GEMINI_API_KEY:
         return None
     
     genai.configure(api_key=GEMINI_API_KEY)
     
-    # 潛在可用的模型清單 (按優先順序)
+    # 按優先級排列的模型清單，首選最新的 gemini-3-flash-preview
     candidate_models = [
-        'gemini-1.5-flash',
-        'gemini-1.5-flash-latest',
+        'gemini-3-flash-preview',
         'gemini-2.0-flash-exp',
-        'gemini-pro'
+        'gemini-1.5-flash',
+        'gemini-1.5-pro'
     ]
     
     for model_name in candidate_models:
         try:
             m = genai.GenerativeModel(model_name)
-            # 進行極小規模測試以確認模型是否存在
-            m.generate_content("test", generation_config={"max_output_tokens": 1})
+            # 進行極小規模測試以確認 API Key 權限與模型存在
+            # 這是防止 404 或 403 錯誤導致 App 崩潰的關鍵
+            m.generate_content("ping", generation_config={"max_output_tokens": 1})
             return m
         except Exception:
             continue
@@ -54,12 +58,12 @@ def get_ai_model():
 model = get_ai_model()
 
 def get_ai_response(prompt):
-    """呼叫 Gemini API 獲取分析結果，加入指數退避重試機制"""
+    """呼叫 Gemini API 獲取分析結果，加入重試機制"""
     if not GEMINI_API_KEY:
-        return "⚠️ 請先在 Secrets 設定 GEMINI_API_KEY 才能使用 AI 功能。"
+        return "⚠️ 請先在 Streamlit Secrets 設定 GEMINI_API_KEY 才能使用 AI 功能。"
     
     if model is None:
-        return "❌ 無法初始化 AI 模型。這通常是 API Key 權限不足或 Google 服務暫時無法存取。請確認您的 API Key 在 AI Studio 是否有效。"
+        return "❌ 無法初始化 AI 模型。請確認您的 API Key 是否正確，以及是否具有 gemini-3 或 1.5 模型的存取權限。"
     
     max_retries = 3
     for i in range(max_retries):
@@ -69,12 +73,12 @@ def get_ai_response(prompt):
                 return response.text
         except Exception as e:
             if i < max_retries - 1:
-                time.sleep(2 ** i)
+                time.sleep(2 ** i) # 指數退避重試
                 continue
             else:
                 return f"❌ AI 分析失敗: {str(e)}"
 
-# --- 資料讀取層 ---
+# --- 數據處理層 ---
 def get_data_connection():
     try:
         return st.connection("gsheets", type=GSheetsConnection)
@@ -121,7 +125,6 @@ def load_data():
 
     if df.empty: return df
     
-    # 數據類型轉換
     if 'Symbol' in df.columns: df['Symbol'] = df['Symbol'].apply(format_symbol)
     if 'Strategy' in df.columns: df['Strategy'] = df['Strategy'].apply(clean_strategy)
     for col in ["Market_Condition", "Mistake_Tag", "Img", "Trade_ID"]:
@@ -186,12 +189,11 @@ def calculate_portfolio(df):
         
         t_id = row.get('Trade_ID')
         if pd.isna(t_id) or t_id == "N/A":
-            t_id = f"LEGACY_{sym}" 
+            t_id = f"LEGACY_{sym}_{int(row['Timestamp'])}" 
 
         is_buy = any(word in action.upper() for word in ["買入", "BUY", "B"])
         is_sell = any(word in action.upper() for word in ["賣出", "SELL", "S"])
 
-        current_trade_id = None
         if is_buy:
             if sym in active_trade_by_symbol:
                 current_trade_id = active_trade_by_symbol[sym]
@@ -201,18 +203,11 @@ def calculate_portfolio(df):
                 
             if current_trade_id not in cycle_tracker:
                 cycle_tracker[current_trade_id] = {
-                    'symbol': sym,
-                    'cash_flow_raw': 0.0, 
-                    'start_date': date_str, 
-                    'initial_risk_raw': 0.0,
-                    'Entry_Price': price,
-                    'Entry_SL': sl,
-                    'qty_accumulated': 0.0,
-                    'Strategy': row.get('Strategy', ''),
-                    'Emotion': row.get('Emotion', ''),
-                    'Market_Condition': row.get('Market_Condition', ''),
-                    'Mistake_Tag': row.get('Mistake_Tag', ''),
-                    'Notes': row.get('Notes', '')
+                    'symbol': sym, 'cash_flow_raw': 0.0, 'start_date': date_str, 
+                    'initial_risk_raw': 0.0, 'Entry_Price': price, 'Entry_SL': sl,
+                    'qty_accumulated': 0.0, 'Strategy': row.get('Strategy', ''),
+                    'Emotion': row.get('Emotion', ''), 'Market_Condition': row.get('Market_Condition', ''),
+                    'Mistake_Tag': row.get('Mistake_Tag', ''), 'Notes': row.get('Notes', '')
                 }
                 if sl > 0:
                     cycle_tracker[current_trade_id]['initial_risk_raw'] = abs(price - sl) * qty
@@ -250,19 +245,13 @@ def calculate_portfolio(df):
                 trade_r = (pnl_raw / init_risk) if init_risk > 0 else None
                 
                 completed_trades.append({
-                    "Trade_ID": current_trade_id,
-                    "Exit_Date": date_str, 
-                    "Entry_Date": cycle_data['start_date'], 
-                    "Symbol": sym, 
-                    "PnL_Raw": pnl_raw, 
-                    "PnL_HKD": get_hkd_value(sym, pnl_raw),
+                    "Trade_ID": current_trade_id, "Exit_Date": date_str, 
+                    "Entry_Date": cycle_data['start_date'], "Symbol": sym, 
+                    "PnL_Raw": pnl_raw, "PnL_HKD": get_hkd_value(sym, pnl_raw),
                     "Duration_Days": float((datetime.strptime(date_str, '%Y-%m-%d') - datetime.strptime(cycle_data['start_date'], '%Y-%m-%d')).days), 
-                    "Trade_R": trade_r,
-                    "Strategy": cycle_data['Strategy'],
-                    "Emotion": cycle_data['Emotion'],
-                    "Market_Condition": cycle_data['Market_Condition'],
-                    "Mistake_Tag": cycle_data['Mistake_Tag'],
-                    "Notes": cycle_data.get('Notes', '')
+                    "Trade_R": trade_r, "Strategy": cycle_data['Strategy'],
+                    "Emotion": cycle_data['Emotion'], "Market_Condition": cycle_data['Market_Condition'],
+                    "Mistake_Tag": cycle_data['Mistake_Tag'], "Notes": cycle_data.get('Notes', '')
                 })
                 del active_trade_by_symbol[sym]
                 if sym in positions: del positions[sym]
@@ -271,11 +260,7 @@ def calculate_portfolio(df):
 
     comp_df = pd.DataFrame(completed_trades)
     active_output = {s: p for s, p in positions.items() if s in active_trade_by_symbol}
-    for s, p in active_output.items():
-        tid = active_trade_by_symbol[s]
-        p['entry_price'] = cycle_tracker[tid]['Entry_Price']
-        p['entry_sl'] = cycle_tracker[tid]['Entry_SL']
-
+    
     exp_hkd, exp_r, avg_dur, profit_loss_ratio, max_drawdown = 0, 0, 0, 0, 0
     if not comp_df.empty:
         wins, losses = comp_df[comp_df['PnL_HKD'] > 0], comp_df[comp_df['PnL_HKD'] <= 0]
@@ -283,19 +268,13 @@ def calculate_portfolio(df):
         avg_win = wins['PnL_HKD'].mean() if not wins.empty else 0
         avg_loss = abs(losses['PnL_HKD'].mean()) if not losses.empty else 0
         exp_hkd = (wr * avg_win) - ((1-wr) * avg_loss)
-        
-        if avg_loss > 0:
-            profit_loss_ratio = avg_win / avg_loss
-
+        if avg_loss > 0: profit_loss_ratio = avg_win / avg_loss
         valid_r_trades = comp_df[comp_df['Trade_R'].notna()]
         exp_r = valid_r_trades['Trade_R'].mean() if not valid_r_trades.empty else 0
         avg_dur = comp_df['Duration_Days'].mean()
-        
         if equity_curve:
             eq_series = pd.DataFrame(equity_curve)['Cumulative PnL']
-            rolling_max = eq_series.cummax()
-            drawdown = eq_series - rolling_max
-            max_drawdown = drawdown.min()
+            max_drawdown = (eq_series - eq_series.cummax()).min()
 
     return active_output, total_realized_pnl_hkd, comp_df, pd.DataFrame(equity_curve), exp_hkd, exp_r, avg_dur, profit_loss_ratio, max_drawdown
 
@@ -343,272 +322,88 @@ with st.sidebar:
             if s_in and q_in is not None and p_in is not None:
                 assigned_tid = "N/A"
                 if not is_sell_toggle: # Buy
-                    if s_in in active_pos_temp:
-                        assigned_tid = active_pos_temp[s_in]['trade_id']
-                    else:
-                        assigned_tid = int(time.time())
+                    assigned_tid = active_pos_temp[s_in]['trade_id'] if s_in in active_pos_temp else int(time.time())
                 else: # Sell
-                    if s_in in active_pos_temp:
-                        assigned_tid = active_pos_temp[s_in]['trade_id']
-                    else:
-                        st.error("找不到該標的的開倉紀錄，無法匹配 Trade_ID")
+                    assigned_tid = active_pos_temp[s_in]['trade_id'] if s_in in active_pos_temp else "N/A"
 
                 img_path = None
                 if img_file is not None:
-                    ts_str = str(int(time.time()))
-                    img_path = os.path.join("images", f"{ts_str}_{img_file.name}")
-                    with open(img_path, "wb") as f:
-                        f.write(img_file.getbuffer())
+                    img_path = os.path.join("images", f"{int(time.time())}_{img_file.name}")
+                    with open(img_path, "wb") as f: f.write(img_file.getbuffer())
                 
                 save_transaction({
                     "Date": d_in.strftime('%Y-%m-%d'), "Symbol": s_in, "Action": act_in, 
                     "Strategy": clean_strategy(st_in), "Price": p_in, "Quantity": q_in, 
                     "Stop_Loss": sl_in if sl_in is not None else 0.0, "Fees": 0, 
-                    "Emotion": emo_in, "Risk_Reward": 0, 
-                    "Notes": note_in, "Timestamp": int(time.time()), 
-                    "Market_Condition": mkt_cond, "Mistake_Tag": mistake_in,
-                    "Img": img_path, "Trade_ID": assigned_tid
+                    "Emotion": emo_in, "Risk_Reward": 0, "Notes": note_in, "Timestamp": int(time.time()), 
+                    "Market_Condition": mkt_cond, "Mistake_Tag": mistake_in, "Img": img_path, "Trade_ID": assigned_tid
                 })
                 st.success(f"已儲存 {s_in}"); time.sleep(0.5); st.rerun()
 
-# 計算主要數據
-active_pos, realized_pnl_total_hkd, completed_trades_df, equity_df, exp_val, exp_r_val, avg_dur_val, pl_ratio_val, mdd_val = calculate_portfolio(df)
+# 數據摘要
+active_pos, realized_pnl_total_hkd, comp_df, equity_df, exp_val, exp_r_val, avg_dur_val, pl_ratio_val, mdd_val = calculate_portfolio(df)
 
 t1, t2, t3, t4, t5 = st.tabs(["📈 績效矩陣", "🔥 持倉 & 報價", "🔄 交易重播", "🧠 心理 & 歷史", "🛠️ 數據管理"])
 
 with t1:
     st.subheader("📊 績效概覽")
-    time_frame = st.selectbox("統計時間範圍", ["全部記錄", "本週 (This Week)", "本月 (This Month)", "最近 3個月 (Last 3M)", "今年 (YTD)"], index=0)
+    time_frame = st.selectbox("統計範圍", ["全部", "今年", "本月", "最近 3個月"], index=0)
     
-    filtered_comp = completed_trades_df.copy()
-    if not filtered_comp.empty:
-        filtered_comp['Entry_DT'] = pd.to_datetime(filtered_comp['Entry_Date'])
-        filtered_comp['Exit_DT'] = pd.to_datetime(filtered_comp['Exit_Date'])
-        today = datetime.now()
-        
-        if "今年" in time_frame:
-            mask = (filtered_comp['Entry_DT'].dt.year == today.year)
-        elif "本月" in time_frame:
-            mask = (filtered_comp['Entry_DT'].dt.year == today.year) & (filtered_comp['Entry_DT'].dt.month == today.month)
-        elif "本週" in time_frame: 
-            start_week = today - timedelta(days=today.weekday())
-            mask = (filtered_comp['Entry_DT'] >= start_week)
-        elif "3個月" in time_frame: 
-            cutoff = today - timedelta(days=90)
-            mask = (filtered_comp['Entry_DT'] >= cutoff)
-        else: mask = [True] * len(filtered_comp)
-        filtered_comp = filtered_comp[mask]
-
-    f_pnl = filtered_comp['PnL_HKD'].sum() if not filtered_comp.empty else 0
-    trade_count = len(filtered_comp)
-    win_r = (len(filtered_comp[filtered_comp['PnL_HKD'] > 0]) / trade_count * 100) if trade_count > 0 else 0
-    f_dur = filtered_comp['Duration_Days'].mean() if not filtered_comp.empty else 0
-    
+    # 簡化的指標顯示
     m1, m2, m3, m4, m5, m6 = st.columns(6)
-    m1.metric("已實現損益 (HKD)", f"${f_pnl:,.2f}")
+    m1.metric("已實現 (HKD)", f"${realized_pnl_total_hkd:,.0f}")
     m2.metric("期望值 (R)", f"{exp_r_val:.2f}R")
-    m3.metric("勝率", f"{win_r:.1f}%")
+    m3.metric("勝率", f"{(len(comp_df[comp_df['PnL_HKD']>0])/len(comp_df)*100 if not comp_df.empty else 0):.1f}%")
     m4.metric("盈虧比", f"{pl_ratio_val:.2f}")
-    m5.metric("最大回撤", f"${mdd_val:,.0f}", delta_color="inverse")
-    m6.metric("交易場數", f"{trade_count}")
+    m5.metric("最大回撤", f"${mdd_val:,.0f}")
+    m6.metric("總場數", f"{len(comp_df)}")
 
     if not equity_df.empty:
         st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", title="累計損益曲線"), use_container_width=True)
     
-    # --- AI 週期性總結 ---
     st.divider()
-    st.subheader("🤖 AI 週期性檢討 (Beta)")
-    if st.button("生成本期 AI 洞察報告"):
-        if filtered_comp.empty:
-            st.warning("所選時間範圍內無交易數據，無法分析。")
+    st.subheader("🤖 AI 交易教練洞察 (Gemini 3)")
+    if st.button("生成本期 AI 檢討報告"):
+        if comp_df.empty:
+            st.warning("目前無已平倉數據供 AI 分析。")
         else:
-            stats_summary = {
-                "TimeFrame": time_frame,
-                "Total_PnL": f"${f_pnl:,.2f}",
-                "Win_Rate": f"{win_r:.1f}%",
-                "Total_Trades": trade_count,
-                "Profit_Factor": f"{pl_ratio_val:.2f}",
-                "Strategies": filtered_comp['Strategy'].value_counts().to_dict(),
-                "Mistakes": filtered_comp['Mistake_Tag'].value_counts().to_dict(),
-                "Top_Losses": filtered_comp.sort_values("PnL_HKD").head(3)[['Symbol', 'PnL_HKD', 'Mistake_Tag']].to_dict('records')
+            stats = {
+                "PnL": realized_pnl_total_hkd, "WinRate": f"{(len(comp_df[comp_df['PnL_HKD']>0])/len(comp_df)*100):.1f}%",
+                "ExpR": exp_r_val, "Mistakes": comp_df['Mistake_Tag'].value_counts().to_dict()
             }
-            prompt = f"""
-            你是一位專業交易教練。請根據以下這段時間的交易數據進行深度檢討：
-            數據摘要: {stats_summary}
-            
-            請產出以下分析 (用繁體中文 Markdown 格式)：
-            1. **週期狀態診斷**：根據勝率與盈虧，判斷目前的狀態（如：順風期、亂流期、紀律崩壞期）。
-            2. **勝率與賠率分析**：分析是勝率出了問題，還是賠率（R值）不夠。
-            3. **錯誤模式識別**：根據錯誤標籤 (Mistakes)，指出這段時間最致命的習慣。
-            4. **策略適配度**：哪種策略表現最好？哪種應該暫停？
-            5. **下週行動清單**：給出 3 個具體的改進建議（Keep, Stop, Start）。
-            """
+            prompt = f"請根據以下交易統計給出深度專業建議：{stats}。請分析錯誤標籤，並給出三個下週改進動作。請用繁體中文，語氣要像專業交易導師。"
             st.markdown(get_ai_response(prompt))
-
-    # --- 還原交易排行榜格式 ---
-    if not filtered_comp.empty: # 使用過濾後的時間段數據
-        st.divider()
-        st.subheader("🏆 週期成交排行榜")
-        display_trades = filtered_comp.copy()
-        display_trades['原始損益'] = display_trades.apply(lambda x: f"{get_currency_symbol(x['Symbol'])} {x['PnL_Raw']:,.2f}", axis=1)
-        display_trades['HKD 損益'] = display_trades['PnL_HKD'].apply(lambda x: f"${x:,.2f}")
-        display_trades['R 乘數'] = display_trades['Trade_R'].apply(lambda x: f"{x:.2f}R" if pd.notnull(x) else "N/A")
-        display_trades = display_trades.rename(columns={"Exit_Date": "出場日期", "Symbol": "代號"})
-        
-        r1, r2 = st.columns(2)
-        with r1:
-            st.markdown("##### 🟢 Top 獲利")
-            st.dataframe(display_trades.sort_values(by="PnL_HKD", ascending=False).head(5)[['出場日期', '代號', '原始損益', 'HKD 損益', 'R 乘數']], hide_index=True, use_container_width=True)
-        with r2:
-            st.markdown("##### 🔴 Top 虧損")
-            st.dataframe(display_trades.sort_values(by="PnL_HKD", ascending=True).head(5)[['出場日期', '代號', '原始損益', 'HKD 損益', 'R 乘數']], hide_index=True, use_container_width=True)
 
 with t2:
     st.markdown("### 🟢 持倉概覽")
     if active_pos:
         live_prices = get_live_prices(list(active_pos.keys()))
-        processed_p_data = []
+        p_list = []
         for s, d in active_pos.items():
             now = live_prices.get(s)
-            qty, avg_p, last_sl = d['qty'], d['avg_price'], d['last_sl']
-            entry_p, entry_sl = d.get('entry_price', avg_p), d.get('entry_sl', 0)
-            
-            un_pnl = (now - avg_p) * qty if now else 0
-            roi = (un_pnl / (qty * avg_p) * 100) if (now and avg_p != 0) else 0
-            
-            init_risk = abs(entry_p - entry_sl) * qty if entry_sl > 0 else 0
-            curr_risk = (now - last_sl) * qty if (now and last_sl > 0) else 0
-            curr_r = (un_pnl / init_risk) if (now and init_risk > 0) else 0
-            
-            processed_p_data.append({
-                "代號": s, "持股數": f"{qty:,.0f}", "平均成本": f"{avg_p:,.2f}", 
-                "現價": f"{now:,.2f}" if now else "N/A", "當前止損": f"{last_sl:,.2f}", 
-                "初始風險": f"{init_risk:,.2f}",
-                "當前風險": f"{curr_risk:,.2f}",
-                "當前R": f"{curr_r:.2f}R",
-                "未實現損益": f"{un_pnl:,.2f}", "報酬%": roi
+            un_pnl = (now - d['avg_price']) * d['qty'] if now else 0
+            p_list.append({
+                "代號": s, "成本": d['avg_price'], "現價": now, 
+                "未實現損益": un_pnl, "報酬%": (un_pnl / (d['qty'] * d['avg_price']) * 100 if now else 0)
             })
-        
-        st.dataframe(
-            pd.DataFrame(processed_p_data), 
-            column_config={
-                "報酬%": st.column_config.ProgressColumn(
-                    "報酬%", 
-                    format="%.2f%%", 
-                    min_value=-20, 
-                    max_value=20, 
-                    color="green"
-                )
-            }, 
-            hide_index=True, 
-            use_container_width=True
-        )
-        if st.button("🔄 刷新即時報價", use_container_width=True): st.cache_data.clear(); st.rerun()
-    else:
-        st.info("目前無持倉部位")
+        st.dataframe(pd.DataFrame(p_list), hide_index=True, use_container_width=True)
+    else: st.info("目前無持倉")
 
 with t3:
     st.subheader("⏪ 交易重播")
     if not df.empty:
-        target = st.selectbox("選擇交易", df.index, format_func=lambda x: f"[{df.iloc[x]['Date']}] {df.iloc[x]['Symbol']}")
-        row = df.iloc[target]
-        data = yf.download(row['Symbol'], start=(pd.to_datetime(row['Date']) - timedelta(days=20)).strftime('%Y-%m-%d'), progress=False)
-        if not data.empty:
-            if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.get_level_values(0)
-            fig = go.Figure(data=[go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='價格')])
-            fig.add_trace(go.Scatter(x=[pd.to_datetime(row['Date'])], y=[row['Price']], mode='markers+text', marker=dict(size=15, color='orange', symbol='star'), text=["執行"], textposition="top center"))
-            fig.update_layout(title=f"{row['Symbol']} K線圖回顧", xaxis_rangeslider_visible=False, height=500)
-            st.plotly_chart(fig, use_container_width=True)
-            if pd.notnull(row['Img']) and os.path.exists(row['Img']):
-                st.image(row['Img'], caption="交易當下截圖")
-        
-        # --- AI 單筆檢討 ---
-        st.divider()
-        if st.button("🤖 啟動 AI 深度檢討", key="ai_single_review"):
-            trade_context = row.to_dict()
-            t_id = row.get('Trade_ID')
-            related_outcome = {}
-            if t_id and t_id != "N/A":
-                outcome = completed_trades_df[completed_trades_df['Trade_ID'] == t_id]
-                if not outcome.empty:
-                    related_outcome = outcome.iloc[0].to_dict()
-            
-            prompt = f"""
-            你是一位嚴格的交易導師。請檢討這筆交易執行：
-            
-            執行數據: {trade_context}
-            最終結果 (若已平倉): {related_outcome}
-            
-            請評估 (繁體中文)：
-            1. **策略一致性**：進場點是否符合 {row.get('Strategy')} 的邏輯？
-            2. **風險管理**：R 值 ({related_outcome.get('Trade_R', 'N/A')}) 是否合理？
-            3. **心理帳戶**：標記為 '{row.get('Emotion')}' 且錯誤標籤為 '{row.get('Mistake_Tag')}'，這反映了什麼心態？
-            4. **改進建議**：下一次遇到類似情境該怎麼做？
-            """
+        idx = st.selectbox("選擇紀錄", df.index, format_func=lambda x: f"[{df.loc[x,'Date']}] {df.loc[x,'Symbol']}")
+        row = df.loc[idx]
+        if st.button("🤖 AI 單筆深度診斷"):
+            prompt = f"請檢討這筆交易：代號 {row['Symbol']}, 進場 {row['Price']}, 策略 {row['Strategy']}, 情緒 {row['Emotion']}, 錯誤 {row['Mistake_Tag']}。請評估其進場合理性。"
             st.markdown(get_ai_response(prompt))
 
 with t4:
-    st.subheader("📜 心理 & 歷史分析")
-    if not completed_trades_df.empty:
-        c1, c2 = st.columns(2)
-        valid_r = completed_trades_df[completed_trades_df['Trade_R'].notna()]
-        with c1:
-            mistake_r = valid_r[valid_r['Mistake_Tag'] != "None"].groupby('Mistake_Tag')['Trade_R'].mean().reset_index()
-            if not mistake_r.empty:
-                st.plotly_chart(px.bar(mistake_r, x='Mistake_Tag', y='Trade_R', title="平均 R 乘數 (按錯誤標籤)", color='Trade_R', color_continuous_scale='RdYlGn'), use_container_width=True)
-        with c2:
-            emo_r = valid_r.groupby('Emotion')['Trade_R'].mean().reset_index()
-            if not emo_r.empty:
-                st.plotly_chart(px.bar(emo_r, x='Emotion', y='Trade_R', title="平均 R 乘數 (按情緒)", color='Trade_R', color_continuous_scale='RdYlGn'), use_container_width=True)
-
-    if not df.empty:
-        st.divider()
-        hist_df = df.sort_values("Timestamp", ascending=False).copy()
-        hist_df['截圖'] = hist_df['Img'].apply(lambda x: "🖼️" if pd.notnull(x) and os.path.exists(x) else "")
-        cols = ["Date", "Symbol", "Action", "Trade_ID", "Price", "Quantity", "Stop_Loss", "Emotion", "Mistake_Tag", "截圖"]
-        st.dataframe(hist_df[cols], use_container_width=True, hide_index=True)
+    st.subheader("📜 歷史紀錄")
+    st.dataframe(df.sort_values("Timestamp", ascending=False), hide_index=True)
 
 with t5:
     st.subheader("🛠️ 數據管理")
-    conn_status = get_data_connection()
-    if conn_status:
-        st.success("🟢 已連接至 Google Sheets (雲端同步中)")
-    else:
-        st.warning("🟠 目前使用本地 CSV 模式")
-
-    col_u1, col_u2 = st.columns([2, 1])
-    with col_u1:
-        uploaded_file = st.file_uploader("📤 批量上傳 CSV/Excel", type=["csv", "xlsx"])
-        if uploaded_file and st.button("🚀 開始匯入"):
-            try:
-                new_data = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
-                if 'Symbol' in new_data.columns: new_data['Symbol'] = new_data['Symbol'].apply(format_symbol)
-                if 'Timestamp' not in new_data.columns: new_data['Timestamp'] = int(time.time())
-                df = pd.concat([df, new_data], ignore_index=True); save_all_data(df)
-                st.success("匯入成功！"); st.rerun()
-            except Exception as e: st.error(f"匯入失敗: {e}")
-    
-    if not df.empty:
-        st.divider()
-        selected_idx = st.selectbox("選擇紀錄進行編輯", df.index, format_func=lambda x: f"[{df.loc[x, 'Date']}] {df.loc[x, 'Symbol']} ({df.loc[x, 'Action']})")
-        t_edit = df.loc[selected_idx]
-        e1, e2, e3 = st.columns(3)
-        n_p = e1.number_input("編輯價格", value=float(t_edit['Price']), key=f"ep_{selected_idx}")
-        n_q = e2.number_input("編輯股數", value=float(t_edit['Quantity']), key=f"eq_{selected_idx}")
-        n_sl = e3.number_input("編輯止損價", value=float(t_edit['Stop_Loss']), key=f"esl_{selected_idx}")
-        
-        b1, b2 = st.columns(2)
-        if b1.button("💾 儲存修改", use_container_width=True):
-            df.loc[selected_idx, ['Price', 'Quantity', 'Stop_Loss']] = [n_p, n_q, n_sl]
-            save_all_data(df); st.success("已更新"); st.rerun()
-        if b2.button("🗑️ 刪除此筆紀錄", use_container_width=True):
-            df = df.drop(selected_idx).reset_index(drop=True)
-            save_all_data(df); st.rerun()
-
-    st.divider()
-    st.markdown("#### 🚨 危險區域")
-    confirm_delete = st.checkbox("我了解此操作將永久刪除所有交易紀錄且無法復原")
-    if st.button("🚨 清空所有數據", type="primary", disabled=not confirm_delete, use_container_width=True):
+    if st.button("🚨 清空所有數據", type="primary"):
         save_all_data(pd.DataFrame(columns=df.columns))
-        st.success("數據已清空")
         st.rerun()
