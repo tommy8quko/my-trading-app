@@ -22,33 +22,57 @@ if not os.path.exists("images"):
 
 st.set_page_config(page_title="TradeMaster Pro UI", layout="wide")
 
-# --- AI 配置 (修復 404 錯誤與優化) ---
+# --- AI 配置 (修復 404 錯誤：加入多模型備援機制) ---
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
-if GEMINI_API_KEY:
+
+def get_ai_model():
+    """嘗試初始化最合適的模型，處理 404 找不到模型的問題"""
+    if not GEMINI_API_KEY:
+        return None
+    
     genai.configure(api_key=GEMINI_API_KEY)
-    # 使用正確的模型名稱，通常 gemini-1.5-flash 是最穩定的選擇
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    # 潛在可用的模型清單 (按優先順序)
+    candidate_models = [
+        'gemini-1.5-flash',
+        'gemini-1.5-flash-latest',
+        'gemini-2.0-flash-exp',
+        'gemini-pro'
+    ]
+    
+    for model_name in candidate_models:
+        try:
+            m = genai.GenerativeModel(model_name)
+            # 進行極小規模測試以確認模型是否存在
+            m.generate_content("test", generation_config={"max_output_tokens": 1})
+            return m
+        except Exception:
+            continue
+    return None
+
+# 初始化模型
+model = get_ai_model()
 
 def get_ai_response(prompt):
     """呼叫 Gemini API 獲取分析結果，加入指數退避重試機制"""
     if not GEMINI_API_KEY:
         return "⚠️ 請先在 Secrets 設定 GEMINI_API_KEY 才能使用 AI 功能。"
     
-    max_retries = 5
+    if model is None:
+        return "❌ 無法初始化 AI 模型。這通常是 API Key 權限不足或 Google 服務暫時無法存取。請確認您的 API Key 在 AI Studio 是否有效。"
+    
+    max_retries = 3
     for i in range(max_retries):
         try:
-            with st.spinner(f"🤖 AI 交易教練正在分析中... (第 {i+1} 次嘗試)"):
+            with st.spinner(f"🤖 AI 交易教練正在分析中..."):
                 response = model.generate_content(prompt)
                 return response.text
         except Exception as e:
-            if "404" in str(e):
-                return "❌ AI 模型找不到 (404)。這通常是 API Key 權限問題或模型名稱變更，請檢查您的 Google AI Studio 設定。"
             if i < max_retries - 1:
-                wait_time = 2 ** i
-                time.sleep(wait_time)
+                time.sleep(2 ** i)
                 continue
             else:
-                return f"❌ AI 分析最終失敗: {str(e)}"
+                return f"❌ AI 分析失敗: {str(e)}"
 
 # --- 資料讀取層 ---
 def get_data_connection():
