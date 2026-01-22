@@ -49,10 +49,10 @@ def get_ai_model():
     genai.configure(api_key=GEMINI_API_KEY)
     
     # 策略：包含 1.5-flash 以確保穩定
-    candidate_models = ['gemini-3-flash-preview',
-                        'gemini-2.5-flash',
-                        'gemini-2.5-flash-lite',
-                        'gemini-2.0-flash-lite',
+    candidate_models = ['gemini-3-flash-preview', 
+                        'gemini-2.5-flash', 
+                        'gemini-2.5-flash-lite', 
+                        'gemini-2.0-flash-lite', 
     ]
     
     last_error = ""
@@ -449,20 +449,21 @@ with t1:
     
     filtered_comp = completed_trades_df.copy()
     if not filtered_comp.empty:
+        # ⚠️ 修改重點：統一使用 Exit_DT (出場時間) 進行篩選
         filtered_comp['Entry_DT'] = pd.to_datetime(filtered_comp['Entry_Date'])
         filtered_comp['Exit_DT'] = pd.to_datetime(filtered_comp['Exit_Date'])
         today = datetime.now()
         
         if "今年" in time_frame:
-            mask = (filtered_comp['Entry_DT'].dt.year == today.year)
+            mask = (filtered_comp['Exit_DT'].dt.year == today.year)
         elif "本月" in time_frame:
-            mask = (filtered_comp['Entry_DT'].dt.year == today.year) & (filtered_comp['Entry_DT'].dt.month == today.month)
+            mask = (filtered_comp['Exit_DT'].dt.year == today.year) & (filtered_comp['Exit_DT'].dt.month == today.month)
         elif "本週" in time_frame: 
             start_week = today - timedelta(days=today.weekday())
-            mask = (filtered_comp['Entry_DT'] >= start_week)
+            mask = (filtered_comp['Exit_DT'] >= start_week)
         elif "3個月" in time_frame: 
             cutoff = today - timedelta(days=90)
-            mask = (filtered_comp['Entry_DT'] >= cutoff)
+            mask = (filtered_comp['Exit_DT'] >= cutoff)
         else: mask = [True] * len(filtered_comp)
         filtered_comp = filtered_comp[mask]
     f_pnl = filtered_comp['PnL_HKD'].sum() if not filtered_comp.empty else 0
@@ -667,8 +668,3 @@ with t5:
         save_all_data(pd.DataFrame(columns=df.columns))
         st.success("數據已清空")
         st.rerun()
-
-
-
-
-
