@@ -44,7 +44,8 @@ def get_ai_model():
         'gemini-3-flash-preview',
         'gemini-2.5-flash',
         'gemini-2.5-flash-lite',
-        'gemini-2.0-flash-lite'
+        'gemini-2.0-flash-lite',
+        'gemini-1.5-flash'
     ]
     
     for model_name in candidate_models:
@@ -590,3 +591,4 @@ with t5:
         save_all_data(pd.DataFrame(columns=df.columns))
         st.success("數據已清空")
         st.rerun()
+
