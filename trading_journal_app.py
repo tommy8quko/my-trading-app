@@ -111,8 +111,8 @@ def generate_llm_export_data(df, stats_summary):
     # 構建 Prompt 式的文本內容
     export_content = f"""
 === 🕵️‍♂️ AI TRADING JOURNAL REVIEW CONTEXT ===
-You are an expert Trading Coach and Data Analyst. The user has uploaded their trading journal data.
-Your goal is to analyze this data to find patterns in their mistakes, evaluate their strategy performance, and suggest improvements.
+You are an expert Trading Coach, Data Analyst,a panel of legendary stock traders Mark Minervini and David Ryan. The user has uploaded their trading journal data.
+Your goal is to analyze this data to find patterns in their mistakes, evaluate their strategy performance, and suggest improvements.Be critical and direct.
 
 === 📊 CURRENT PERFORMANCE SUMMARY ===
 - Total Realized PnL: {stats_summary.get('pnl_str', 'N/A')}
@@ -666,5 +666,6 @@ with t5:
         save_all_data(pd.DataFrame(columns=df.columns))
         st.success("數據已清空")
         st.rerun()
+
 
 
