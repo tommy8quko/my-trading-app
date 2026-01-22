@@ -10,7 +10,11 @@ from datetime import datetime, timedelta
 import io
 
 # Google Sheets 連線庫
-from streamlit_gsheets import GSheetsConnection
+try:
+    from streamlit_gsheets import GSheetsConnection
+except ImportError:
+    # 增加容錯，避免沒有安裝庫時直接報錯
+    st.error("⚠️ 缺少 streamlit_gsheets 庫。如果是本地運行，請執行 `pip install st-gsheets-connection`")
 
 # Google Gemini AI 庫
 import google.generativeai as genai
@@ -25,42 +29,48 @@ if not os.path.exists("images"):
 
 st.set_page_config(page_title="TradeMaster Pro UI", layout="wide")
 
-# --- AI 配置 (整合最新 Gemini 3 & 多模型備援機制) ---
+# --- AI 配置 (優化版：節省配額 & 穩定連線) ---
 
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 
+@st.cache_resource(ttl=3600, show_spinner=False)
 def get_ai_model():
-    """
-    根據官方最新指引初始化模型。
-    參考: https://ai.google.dev/gemini-api/docs/quickstart
+    """ 
+    優化版初始化模型：
+    1. 使用 @st.cache_resource 防止每次頁面刷新都消耗 API Quota (Ping)。
+    2. 加入 gemini-1.5-flash 作為主力省流模型。
     """
     if not GEMINI_API_KEY:
-        return None
+        return None, "未設定 API Key"
     
     genai.configure(api_key=GEMINI_API_KEY)
     
-    # 按優先級排列的模型清單，首選最新的 gemini-3-flash-preview
-    candidate_models = [        
-        'gemini-3-flash-preview',
-        'gemini-2.5-flash',
-        'gemini-2.5-flash-lite',
-        'gemini-2.0-flash-lite',
-        'gemini-1.5-flash'
+    # 按優先級排列的模型清單
+    # 策略：先嘗試新的 2.0/3，但必須包含 1.5-flash 以確保穩定和節省額度
+    candidate_models = [
+        'gemini-1.5-flash',      # ✅ 推薦：速度快、額度高 (每天1500+)，最適合高頻使用
+        'gemini-2.0-flash-exp',  # Google 最新實驗版
+        'gemini-1.5-pro',        # 邏輯強，但額度較少 (20-50 RPD)
+        'gemini-3-flash-preview' # 你的清單 (如果有點不穩可依賴上面的備援)
     ]
+    
+    last_error = ""
     
     for model_name in candidate_models:
         try:
             m = genai.GenerativeModel(model_name)
-            # 進行極小規模測試以確認 API Key 權限與模型存在
-            # 這是防止 404 或 403 錯誤導致 App 崩潰的關鍵
+            # 進行極小規模測試
+            # 因為有 @st.cache_resource，這個 Ping 在 App 啟動後只會執行一次！
             m.generate_content("ping", generation_config={"max_output_tokens": 1})
-            return m
-        except Exception:
+            return m, None
+        except Exception as e:
+            last_error = str(e)
             continue
-    return None
+            
+    return None, f"所有模型連線失敗。最後錯誤: {last_error}"
 
-# 初始化模型
-model = get_ai_model()
+# 初始化模型 (接收模型物件與錯誤訊息)
+model, init_error = get_ai_model()
 
 def get_ai_response(prompt):
     """呼叫 Gemini API 獲取分析結果，加入重試機制"""
@@ -68,7 +78,8 @@ def get_ai_response(prompt):
         return "⚠️ 請先在 Streamlit Secrets 設定 GEMINI_API_KEY 才能使用 AI 功能。"
     
     if model is None:
-        return "❌ 無法初始化 AI 模型。請確認您的 API Key 是否正確，以及是否具有 gemini-3 或 1.5 模型的存取權限。"
+        # 顯示具體的初始化錯誤，方便除錯
+        return f"❌ 無法初始化 AI 模型。\n錯誤詳情: {init_error}\n請檢查 API Key 是否正確或配額是否已滿。"
     
     max_retries = 3
     for i in range(max_retries):
@@ -185,7 +196,6 @@ def calculate_portfolio(df):
     active_trade_by_symbol = {} # Key: Symbol, Value: Trade_ID
     completed_trades = [] 
     equity_curve = []
-
     for _, row in df.iterrows():
         sym = format_symbol(row['Symbol']) 
         action = str(row['Action']) if pd.notnull(row['Action']) else ""
@@ -199,7 +209,6 @@ def calculate_portfolio(df):
         is_buy = any(word in action.upper() for word in ["買入", "BUY", "B"])
         is_sell = any(word in action.upper() for word in ["賣出", "SELL", "S"])
         current_trade_id = None
-
         if is_buy:
             if sym in active_trade_by_symbol:
                 current_trade_id = active_trade_by_symbol[sym]
@@ -236,7 +245,6 @@ def calculate_portfolio(df):
             curr['qty'] += qty
             if curr['qty'] > 0: curr['avg_price'] = total_cost_base / curr['qty']
             if sl > 0: curr['last_sl'] = sl
-
         elif is_sell and sym in active_trade_by_symbol:
             current_trade_id = active_trade_by_symbol[sym]
             cycle_data = cycle_tracker[current_trade_id]
@@ -251,11 +259,15 @@ def calculate_portfolio(df):
             
             curr['qty'] -= sell_qty
             if sl > 0: curr['last_sl'] = sl
-
             if curr['qty'] < 0.0001:
                 pnl_raw = cycle_data['cash_flow_raw']
                 init_risk = cycle_data['initial_risk_raw']
                 trade_r = (pnl_raw / init_risk) if init_risk > 0 else None
+                
+                try:
+                    duration = float((datetime.strptime(date_str, '%Y-%m-%d') - datetime.strptime(cycle_data['start_date'], '%Y-%m-%d')).days)
+                except:
+                    duration = 0
                 
                 completed_trades.append({
                     "Trade_ID": current_trade_id,
@@ -264,7 +276,7 @@ def calculate_portfolio(df):
                     "Symbol": sym, 
                     "PnL_Raw": pnl_raw, 
                     "PnL_HKD": get_hkd_value(sym, pnl_raw),
-                    "Duration_Days": float((datetime.strptime(date_str, '%Y-%m-%d') - datetime.strptime(cycle_data['start_date'], '%Y-%m-%d')).days), 
+                    "Duration_Days": duration, 
                     "Trade_R": trade_r,
                     "Strategy": cycle_data['Strategy'],
                     "Emotion": cycle_data['Emotion'],
@@ -276,17 +288,13 @@ def calculate_portfolio(df):
                 if sym in positions: del positions[sym]
             
             equity_curve.append({"Date": date_str, "Cumulative PnL": running_pnl_hkd})
-
     comp_df = pd.DataFrame(completed_trades)
     active_output = {s: p for s, p in positions.items() if s in active_trade_by_symbol}
-
     for s, p in active_output.items():
         tid = active_trade_by_symbol[s]
         p['entry_price'] = cycle_tracker[tid]['Entry_Price']
         p['entry_sl'] = cycle_tracker[tid]['Entry_SL']
-
     exp_hkd, exp_r, avg_dur, profit_loss_ratio, max_drawdown = 0, 0, 0, 0, 0
-
     if not comp_df.empty:
         wins, losses = comp_df[comp_df['PnL_HKD'] > 0], comp_df[comp_df['PnL_HKD'] <= 0]
         wr = len(wins) / len(comp_df)
@@ -306,7 +314,6 @@ def calculate_portfolio(df):
             rolling_max = eq_series.cummax()
             drawdown = eq_series - rolling_max
             max_drawdown = drawdown.min()
-
     return active_output, total_realized_pnl_hkd, comp_df, pd.DataFrame(equity_curve), exp_hkd, exp_r, avg_dur, profit_loss_ratio, max_drawdown
 
 @st.cache_data(ttl=60)
@@ -317,7 +324,11 @@ def get_live_prices(symbols_list):
         prices = {}
         for s in symbols_list:
             try:
-                val = data['Close'][s].dropna().iloc[-1] if len(symbols_list) > 1 else data['Close'].dropna().iloc[-1]
+                # 兼容單一股票與多股票的返回格式
+                if len(symbols_list) > 1:
+                    val = data['Close'][s].dropna().iloc[-1]
+                else:
+                    val = data['Close'].dropna().iloc[-1]
                 prices[s] = float(val)
             except: prices[s] = None
         return prices
@@ -363,7 +374,6 @@ with st.sidebar:
                         assigned_tid = active_pos_temp[s_in]['trade_id']
                     else:
                         st.error("找不到該標的的開倉紀錄，無法匹配 Trade_ID")
-
                 img_path = None
                 if img_file is not None:
                     ts_str = str(int(time.time()))
@@ -410,7 +420,6 @@ with t1:
             mask = (filtered_comp['Entry_DT'] >= cutoff)
         else: mask = [True] * len(filtered_comp)
         filtered_comp = filtered_comp[mask]
-
     f_pnl = filtered_comp['PnL_HKD'].sum() if not filtered_comp.empty else 0
     trade_count = len(filtered_comp)
     win_r = (len(filtered_comp[filtered_comp['PnL_HKD'] > 0]) / trade_count * 100) if trade_count > 0 else 0
@@ -423,13 +432,12 @@ with t1:
     m4.metric("盈虧比", f"{pl_ratio_val:.2f}")
     m5.metric("最大回撤", f"${mdd_val:,.0f}", delta_color="inverse")
     m6.metric("交易場數", f"{trade_count}")
-
     if not equity_df.empty:
         st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", title="累計損益曲線"), use_container_width=True)
     
     # --- AI 交易教練洞察 (整合新版 Prompt) ---
     st.divider()
-    st.subheader("🤖 AI 交易教練洞察 (Gemini 3)")
+    st.subheader("🤖 AI 交易教練洞察")
     if st.button("生成本期 AI 檢討報告"):
         if filtered_comp.empty:
             st.warning("目前無已平倉數據供 AI 分析。")
@@ -443,7 +451,6 @@ with t1:
             }
             prompt = f"請根據以下交易統計給出深度專業建議：{stats}。請分析錯誤標籤，並給出三個下週改進動作。請用繁體中文，語氣要像專業交易導師。"
             st.markdown(get_ai_response(prompt))
-
     # --- 還原交易排行榜格式 ---
     if not filtered_comp.empty:
         st.divider()
@@ -554,7 +561,6 @@ with t5:
         st.success("🟢 已連接至 Google Sheets (雲端同步中)")
     else:
         st.warning("🟠 目前使用本地 CSV 模式")
-
     col_u1, col_u2 = st.columns([2, 1])
     with col_u1:
         uploaded_file = st.file_uploader("📤 批量上傳 CSV/Excel", type=["csv", "xlsx"])
@@ -591,6 +597,3 @@ with t5:
         save_all_data(pd.DataFrame(columns=df.columns))
         st.success("數據已清空")
         st.rerun()
-
-
-
