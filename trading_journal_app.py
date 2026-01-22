@@ -40,7 +40,11 @@ def get_ai_model():
     genai.configure(api_key=GEMINI_API_KEY)
     
     # 按優先級排列的模型清單，首選最新的 gemini-3-flash-preview
-    candidate_models = [
+    candidate_models = [        
+        'gemini-3-flash-preview',
+        'gemini-2.5-flash',
+        'gemini-2.5-flash-lite',
+        'gemini-2.0-flash-lite',
         'gemini-1.5-flash'
     ]
     
@@ -587,5 +591,6 @@ with t5:
         save_all_data(pd.DataFrame(columns=df.columns))
         st.success("數據已清空")
         st.rerun()
+
 
 
