@@ -137,7 +137,8 @@ Please analyze the data above and provide:
 2. Correlation analysis: Which 'Emotion' or 'Mistake_Tag' leads to the biggest losses?
 3. Strategy performance review: Which strategy is performing best?
 4. Three actionable steps to improve profitability based on this specific data.
-""" Answer in Traditional Chinese
+5. Answer in Traditional Chinese
+"""
     return export_content
 
 # --- 資料讀取層 ---
@@ -666,6 +667,7 @@ with t5:
         save_all_data(pd.DataFrame(columns=df.columns))
         st.success("數據已清空")
         st.rerun()
+
 
 
 
