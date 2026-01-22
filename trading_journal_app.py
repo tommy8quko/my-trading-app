@@ -17,7 +17,7 @@ except ImportError:
 
 # Google Gemini AI 庫
 import google.generativeai as genai
-from openai import OpenAI # 用於備援 (如果有的話)
+
 
 # --- 1. 核心配置與初始化 ---
 
@@ -666,4 +666,5 @@ with t5:
         save_all_data(pd.DataFrame(columns=df.columns))
         st.success("數據已清空")
         st.rerun()
+
 
