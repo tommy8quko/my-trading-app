@@ -49,11 +49,10 @@ def get_ai_model():
     genai.configure(api_key=GEMINI_API_KEY)
     
     # 策略：包含 1.5-flash 以確保穩定
-    candidate_models = [
-       'gemini-3-flash-preview',
-       'gemini-2.5-flash',
-       'gemini-2.5-flash-lite',
-       'gemini-2.0-flash-lite',
+    candidate_models = ['gemini-3-flash-preview',
+                        'gemini-2.5-flash',
+                        'gemini-2.5-flash-lite',
+                        'gemini-2.0-flash-lite',
     ]
     
     last_error = ""
@@ -667,3 +666,4 @@ with t5:
         save_all_data(pd.DataFrame(columns=df.columns))
         st.success("數據已清空")
         st.rerun()
+
