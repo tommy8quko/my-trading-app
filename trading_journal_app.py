@@ -13,11 +13,11 @@ import io
 try:
     from streamlit_gsheets import GSheetsConnection
 except ImportError:
-    # 增加容錯，避免沒有安裝庫時直接報錯
-    st.error("⚠️ 缺少 streamlit_gsheets 庫。如果是本地運行，請執行 `pip install st-gsheets-connection`")
+    st.error("⚠️ 缺少 streamlit_gsheets 庫。請執行 `pip install st-gsheets-connection`")
 
 # Google Gemini AI 庫
 import google.generativeai as genai
+from openai import OpenAI # 用於備援 (如果有的話)
 
 # --- 1. 核心配置與初始化 ---
 
@@ -29,29 +29,31 @@ if not os.path.exists("images"):
 
 st.set_page_config(page_title="TradeMaster Pro UI", layout="wide")
 
-# --- AI 配置 (優化版：節省配額 & 穩定連線) ---
+# --- AI 配置 (優化版：節省配額 + 雙引擎架構) ---
 
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
+# 如果你有備援的 Key (例如 DeepSeek 或 Groq)，可以設定在這裡，否則留空
+BACKUP_API_KEY = st.secrets.get("BACKUP_API_KEY", "") 
+BACKUP_BASE_URL = st.secrets.get("BACKUP_BASE_URL", "https://api.deepseek.com") 
 
 @st.cache_resource(ttl=3600, show_spinner=False)
 def get_ai_model():
     """ 
     優化版初始化模型：
-    1. 使用 @st.cache_resource 防止每次頁面刷新都消耗 API Quota (Ping)。
-    2. 加入 gemini-1.5-flash 作為主力省流模型。
+    1. 使用 @st.cache_resource 防止每次頁面刷新都消耗 API Quota。
+    2. 優先使用免費額度高的模型。
     """
     if not GEMINI_API_KEY:
         return None, "未設定 API Key"
     
     genai.configure(api_key=GEMINI_API_KEY)
     
-    # 按優先級排列的模型清單
-    # 策略：先嘗試新的 2.0/3，但必須包含 1.5-flash 以確保穩定和節省額度
+    # 策略：包含 1.5-flash 以確保穩定
     candidate_models = [
-        'gemini-1.5-flash',      # ✅ 推薦：速度快、額度高 (每天1500+)，最適合高頻使用
-        'gemini-2.0-flash-exp',  # Google 最新實驗版
-        'gemini-1.5-pro',        # 邏輯強，但額度較少 (20-50 RPD)
-        'gemini-3-flash-preview' # 你的清單 (如果有點不穩可依賴上面的備援)
+       'gemini-3-flash-preview',
+       'gemini-2.5-flash',
+       'gemini-2.5-flash-lite',
+       'gemini-2.0-flash-lite',
     ]
     
     last_error = ""
@@ -59,40 +61,85 @@ def get_ai_model():
     for model_name in candidate_models:
         try:
             m = genai.GenerativeModel(model_name)
-            # 進行極小規模測試
-            # 因為有 @st.cache_resource，這個 Ping 在 App 啟動後只會執行一次！
             m.generate_content("ping", generation_config={"max_output_tokens": 1})
             return m, None
         except Exception as e:
             last_error = str(e)
             continue
             
-    return None, f"所有模型連線失敗。最後錯誤: {last_error}"
+    return None, last_error
 
-# 初始化模型 (接收模型物件與錯誤訊息)
+# 初始化模型
 model, init_error = get_ai_model()
 
 def get_ai_response(prompt):
-    """呼叫 Gemini API 獲取分析結果，加入重試機制"""
+    """呼叫 Gemini API，如果失敗則嘗試備援"""
     if not GEMINI_API_KEY:
-        return "⚠️ 請先在 Streamlit Secrets 設定 GEMINI_API_KEY 才能使用 AI 功能。"
+        return "⚠️ 請先在 Streamlit Secrets 設定 GEMINI_API_KEY。"
     
-    if model is None:
-        # 顯示具體的初始化錯誤，方便除錯
-        return f"❌ 無法初始化 AI 模型。\n錯誤詳情: {init_error}\n請檢查 API Key 是否正確或配額是否已滿。"
-    
-    max_retries = 3
-    for i in range(max_retries):
+    # 1. 嘗試 Gemini
+    if model:
         try:
-            with st.spinner(f"🤖 AI 交易教練正在分析中..."):
+            with st.spinner(f"🤖 AI 交易教練正在分析中 (Gemini)..."):
                 response = model.generate_content(prompt)
                 return response.text
+        except Exception:
+            pass # 失敗則進入備援
+            
+    # 2. 嘗試備援 (如果有的話)
+    if BACKUP_API_KEY:
+        try:
+            with st.spinner(f"⚠️ 切換至備援 AI 分析中..."):
+                client = OpenAI(api_key=BACKUP_API_KEY, base_url=BACKUP_BASE_URL)
+                response = client.chat.completions.create(
+                    model="deepseek-chat", # 或 gpt-4o-mini, llama-3 等
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                return f"🔄 [Backup AI] {response.choices[0].message.content}"
         except Exception as e:
-            if i < max_retries - 1:
-                time.sleep(2 ** i) # 指數退避重試
-                continue
-            else:
-                return f"❌ AI 分析失敗: {str(e)}"
+            return f"❌ AI 分析失敗: {e}"
+            
+    return f"❌ 無法初始化 AI 模型或配額已滿。\nGemini 錯誤: {init_error}"
+
+# --- 新增功能：生成 AI 專用分析檔案 ---
+def generate_llm_export_data(df, stats_summary):
+    """
+    生成一個包含 Context + 統計 + 原始數據的文本，
+    專門設計給外部 LLM (ChatGPT/Claude) 閱讀。
+    """
+    csv_data = df.to_csv(index=False)
+    
+    # 構建 Prompt 式的文本內容
+    export_content = f"""
+=== 🕵️‍♂️ AI TRADING JOURNAL REVIEW CONTEXT ===
+You are an expert Trading Coach and Data Analyst. The user has uploaded their trading journal data.
+Your goal is to analyze this data to find patterns in their mistakes, evaluate their strategy performance, and suggest improvements.
+
+=== 📊 CURRENT PERFORMANCE SUMMARY ===
+- Total Realized PnL: {stats_summary.get('pnl_str', 'N/A')}
+- Win Rate: {stats_summary.get('win_rate', 'N/A')}
+- Profit Factor: {stats_summary.get('pf', 'N/A')}
+- Expectancy (R): {stats_summary.get('exp_r', 'N/A')}
+- Max Drawdown: {stats_summary.get('mdd', 'N/A')}
+- Total Trades: {stats_summary.get('count', 'N/A')}
+
+=== 📖 DATA DICTIONARY ===
+- Trade_R: Risk multiple (Profit / Initial Risk). >1 is good, < -1 is bad risk management.
+- Mistake_Tag: The specific error made (FOMO, Revenge Trade, etc.).
+- Emotion: The psychological state at entry.
+- Strategy: The setup used (Pullback, Breakout, etc.).
+
+=== 📂 RAW TRADING LOG (CSV FORMAT) ===
+{csv_data}
+
+=== 📝 INSTRUCTIONS FOR AI ===
+Please analyze the data above and provide:
+1. A critique of the user's risk management based on 'Trade_R' and 'Stop_Loss'.
+2. Correlation analysis: Which 'Emotion' or 'Mistake_Tag' leads to the biggest losses?
+3. Strategy performance review: Which strategy is performing best?
+4. Three actionable steps to improve profitability based on this specific data.
+"""
+    return export_content
 
 # --- 資料讀取層 ---
 
@@ -324,7 +371,6 @@ def get_live_prices(symbols_list):
         prices = {}
         for s in symbols_list:
             try:
-                # 兼容單一股票與多股票的返回格式
                 if len(symbols_list) > 1:
                     val = data['Close'][s].dropna().iloc[-1]
                 else:
@@ -399,7 +445,6 @@ t1, t2, t3, t4, t5 = st.tabs(["📈 績效矩陣", "🔥 持倉 & 報價", "🔄
 
 with t1:
     st.subheader("📊 績效概覽")
-    # 保留原本的篩選功能
     time_frame = st.selectbox("統計時間範圍", ["全部記錄", "本週 (This Week)", "本月 (This Month)", "最近 3個月 (Last 3M)", "今年 (YTD)"], index=0)
     
     filtered_comp = completed_trades_df.copy()
@@ -435,14 +480,13 @@ with t1:
     if not equity_df.empty:
         st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", title="累計損益曲線"), use_container_width=True)
     
-    # --- AI 交易教練洞察 (整合新版 Prompt) ---
+    # --- AI 交易教練洞察 ---
     st.divider()
     st.subheader("🤖 AI 交易教練洞察")
     if st.button("生成本期 AI 檢討報告"):
         if filtered_comp.empty:
             st.warning("目前無已平倉數據供 AI 分析。")
         else:
-            # 整合現有篩選器的數據到新版 AI 請求中
             stats = {
                 "PnL": f_pnl, 
                 "WinRate": f"{win_r:.1f}%",
@@ -499,15 +543,10 @@ with t2:
             pd.DataFrame(processed_p_data), 
             column_config={
                 "報酬%": st.column_config.ProgressColumn(
-                    "報酬%", 
-                    format="%.2f%%", 
-                    min_value=-20, 
-                    max_value=20, 
-                    color="green"
+                    "報酬%", format="%.2f%%", min_value=-20, max_value=20, color="green"
                 )
             }, 
-            hide_index=True, 
-            use_container_width=True
+            hide_index=True, use_container_width=True
         )
         if st.button("🔄 刷新即時報價", use_container_width=True): st.cache_data.clear(); st.rerun()
     else:
@@ -528,7 +567,6 @@ with t3:
             if pd.notnull(row['Img']) and os.path.exists(row['Img']):
                 st.image(row['Img'], caption="交易當下截圖")
         
-        # --- AI 單筆深度診斷 (整合新版 Prompt) ---
         st.divider()
         if st.button("🤖 AI 單筆深度診斷"):
             prompt = f"請檢討這筆交易：代號 {row['Symbol']}, 進場 {row['Price']}, 策略 {row['Strategy']}, 情緒 {row['Emotion']}, 錯誤 {row['Mistake_Tag']}。請評估其進場合理性。"
@@ -561,6 +599,38 @@ with t5:
         st.success("🟢 已連接至 Google Sheets (雲端同步中)")
     else:
         st.warning("🟠 目前使用本地 CSV 模式")
+    
+    # --- NEW: AI 匯出功能 ---
+    st.divider()
+    st.markdown("#### 🤖 匯出給 AI 分析 (Export for LLM)")
+    st.info("下載此檔案後，直接上傳給 ChatGPT / Claude / DeepSeek，它們會自動為您進行全方位帳戶診斷。")
+    
+    # 準備匯出數據
+    if not df.empty:
+        # 計算匯出用的摘要數據
+        export_stats = {
+            "pnl_str": f"${realized_pnl_total_hkd:,.2f}",
+            "win_rate": f"{(len(completed_trades_df[completed_trades_df['PnL_HKD'] > 0])/len(completed_trades_df)*100):.1f}%" if not completed_trades_df.empty else "N/A",
+            "pf": f"{pl_ratio_val:.2f}",
+            "exp_r": f"{exp_r_val:.2f}R",
+            "mdd": f"${mdd_val:,.0f}",
+            "count": len(completed_trades_df)
+        }
+        
+        export_text = generate_llm_export_data(df, export_stats)
+        
+        st.download_button(
+            label="📥 下載 AI 專用分析報告 (.txt)",
+            data=export_text,
+            file_name=f"TradeMaster_AI_Review_{datetime.now().strftime('%Y%m%d')}.txt",
+            mime="text/plain"
+        )
+    else:
+        st.caption("尚無交易紀錄可供匯出。")
+    
+    st.divider()
+    
+    # 原有的匯入功能
     col_u1, col_u2 = st.columns([2, 1])
     with col_u1:
         uploaded_file = st.file_uploader("📤 批量上傳 CSV/Excel", type=["csv", "xlsx"])
