@@ -517,12 +517,11 @@ with st.sidebar:
     q_in = col1.number_input("股數 (Qty)", min_value=0.0, step=100.0, key='sb_qty', on_change=update_all_metrics)
     p_in = col2.number_input("成交價格 (Price)", min_value=0.0, step=0.05, key='sb_price', on_change=update_all_metrics)
     
-    # 新增：倉位 % (互動調整)
-    pos_pct_in = st.number_input("該筆交易佔整體倉位的 %", min_value=0.0, max_value=100.0, step=1.0, key='sb_pos_pct', on_change=update_qty)
-    
-    st.divider()
-    
     sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.05, key='sb_sl', on_change=update_risk_pct)
+        
+    st.divider()
+    # 新增：倉位 % (互動調整)
+    pos_pct_in = st.number_input("該筆交易佔整體倉位的 %", min_value=0.0, max_value=100.0, step=1.0, key='sb_pos_pct', on_change=update_qty)  
     
     # 新增：風險 % (互動調整)
     risk_pct_in = st.number_input("停損幅度佔整體倉位的 %", min_value=0.0, max_value=100.0, step=0.1, key='sb_risk_pct', on_change=update_sl)
@@ -895,3 +894,4 @@ with t5:
         save_all_data(pd.DataFrame(columns=df.columns))
         st.success("數據已清空")
         st.rerun()
+
