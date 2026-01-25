@@ -455,56 +455,128 @@ df = load_data()
 # Sidebar: Trade Form
 with st.sidebar:
     st.header("⚡ 執行面板")
-    active_pos_temp, _, _, _, _, _, _, _, _, _, _, _ = calculate_portfolio(df)
     
-    with st.form("trade_form", clear_on_submit=True):
-        d_in = st.date_input("日期")
-        s_in = format_symbol(st.text_input("代號 (Ticker)").upper().strip())
-        is_sell_toggle = st.toggle("Buy 🟢 / Sell 🔴", value=False)
-        act_in = "賣出 Sell" if is_sell_toggle else "買入 Buy"
-        col1, col2 = st.columns(2)
-        q_in = col1.number_input("股數 (Qty)", min_value=0.0, step=1.0, value=None)
-        p_in = col2.number_input("成交價格 (Price)", min_value=0.0, step=0.01, value=None)
-        sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.01, value=None)
-        st.divider()
-        mkt_cond = st.selectbox("市場環境", ["Trending Up", "Trending Down", "Range/Choppy", "High Volatility", "N/A"])
-        mistake_in = st.selectbox("錯誤標籤", ["None", "Fomo", "Revenge Trade", "Fat Finger", "Late Entry", "Moved Stop"])
-        st_in = st.selectbox("策略 (Strategy)", ["Pullback", "Breakout", "➕ 新增..."])
-        if st_in == "➕ 新增...": st_in = st.text_input("輸入新策略名稱")
-        emo_in = st.select_slider("心理狀態", options=["恐慌", "猶豫", "平靜", "自信", "衝動"], value="平靜")
-        note_in = st.text_area("決策筆記")
-        img_file = st.file_uploader("📸 上傳圖表截圖", type=['png','jpg','jpeg'])
-        
-        if st.form_submit_button("儲存執行紀錄"):
-            if s_in and q_in is not None and p_in is not None:
-                assigned_tid = "N/A"
-                if not is_sell_toggle: # Buy
-                    if s_in in active_pos_temp:
-                        assigned_tid = active_pos_temp[s_in]['trade_id']
-                    else:
-                        assigned_tid = int(time.time())
-                else: # Sell
-                    if s_in in active_pos_temp:
-                        assigned_tid = active_pos_temp[s_in]['trade_id']
-                    else:
-                        st.error("找不到該標的的開倉紀錄，無法匹配 Trade_ID")
-                img_path = None
-                if img_file is not None:
-                    ts_str = str(int(time.time()))
-                    img_path = os.path.join("images", f"{ts_str}_{img_file.name}")
-                    with open(img_path, "wb") as f:
-                        f.write(img_file.getbuffer())
-                
-                save_transaction({
-                    "Date": d_in.strftime('%Y-%m-%d'), "Symbol": s_in, "Action": act_in, 
-                    "Strategy": clean_strategy(st_in), "Price": p_in, "Quantity": q_in, 
-                    "Stop_Loss": sl_in if sl_in is not None else 0.0, "Fees": 0, 
-                    "Emotion": emo_in, "Risk_Reward": 0, 
-                    "Notes": note_in, "Timestamp": int(time.time()), 
-                    "Market_Condition": mkt_cond, "Mistake_Tag": mistake_in,
-                    "Img": img_path, "Trade_ID": assigned_tid
-                })
-                st.success(f"已儲存 {s_in}"); time.sleep(0.5); st.rerun()
+    # 獲取計算用的總權益 (為了計算倉位 %)
+    active_pos_temp, realized_pnl_total_hkd_sb, _, _, _, _, _, _, _, _, _, _ = calculate_portfolio(df)
+    current_equity_sb = INITIAL_CAPITAL + realized_pnl_total_hkd_sb
+    if current_equity_sb <= 0: current_equity_sb = 1 # 避免除以零
+
+    # --- 初始化 Session State (為了互動計算) ---
+    if 'sb_qty' not in st.session_state: st.session_state.sb_qty = 0.0
+    if 'sb_price' not in st.session_state: st.session_state.sb_price = 0.0
+    if 'sb_sl' not in st.session_state: st.session_state.sb_sl = 0.0
+    if 'sb_pos_pct' not in st.session_state: st.session_state.sb_pos_pct = 0.0
+    if 'sb_risk_pct' not in st.session_state: st.session_state.sb_risk_pct = 0.0
+    
+    # --- 回調函數 (Callbacks) ---
+    def update_pos_pct():
+        """當 Price 或 Qty 改變，更新 Pos%"""
+        try:
+            val = st.session_state.sb_price * st.session_state.sb_qty
+            st.session_state.sb_pos_pct = (val / current_equity_sb) * 100
+        except: pass
+
+    def update_qty():
+        """當 Pos% 改變，更新 Qty"""
+        try:
+            if st.session_state.sb_price > 0:
+                val = current_equity_sb * (st.session_state.sb_pos_pct / 100)
+                st.session_state.sb_qty = val / st.session_state.sb_price
+        except: pass
+
+    def update_risk_pct():
+        """當 Price, Qty, 或 SL 改變，更新 Risk%"""
+        try:
+            risk_amt = abs(st.session_state.sb_price - st.session_state.sb_sl) * st.session_state.sb_qty
+            st.session_state.sb_risk_pct = (risk_amt / current_equity_sb) * 100
+        except: pass
+
+    def update_sl():
+        """當 Risk% 改變，更新 SL"""
+        try:
+            if st.session_state.sb_qty > 0:
+                dist = (current_equity_sb * (st.session_state.sb_risk_pct / 100)) / st.session_state.sb_qty
+                # 判斷多空 (簡單用 toggle key)
+                if st.session_state.sb_is_sell: # Sell, SL 在 Price 上方
+                    st.session_state.sb_sl = st.session_state.sb_price + dist
+                else: # Buy, SL 在 Price 下方
+                    st.session_state.sb_sl = st.session_state.sb_price - dist
+        except: pass
+
+    def update_all_metrics():
+        update_pos_pct()
+        update_risk_pct()
+
+    # --- UI 輸入區 (移除 st.form 以支援互動) ---
+    d_in = st.date_input("日期", value=datetime.now(), key='sb_date')
+    s_in = format_symbol(st.text_input("代號 (Ticker)", key='sb_symbol').upper().strip())
+    is_sell_toggle = st.toggle("Buy 🟢 / Sell 🔴", value=False, key='sb_is_sell', on_change=update_sl)
+    act_in = "賣出 Sell" if is_sell_toggle else "買入 Buy"
+    
+    col1, col2 = st.columns(2)
+    q_in = col1.number_input("股數 (Qty)", min_value=0.0, step=100.0, key='sb_qty', on_change=update_all_metrics)
+    p_in = col2.number_input("成交價格 (Price)", min_value=0.0, step=0.05, key='sb_price', on_change=update_all_metrics)
+    
+    # 新增：倉位 % (互動調整)
+    pos_pct_in = st.number_input("該筆交易佔整體倉位的 %", min_value=0.0, max_value=100.0, step=1.0, key='sb_pos_pct', on_change=update_qty)
+    
+    st.divider()
+    
+    sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.05, key='sb_sl', on_change=update_risk_pct)
+    
+    # 新增：風險 % (互動調整)
+    risk_pct_in = st.number_input("停損幅度佔整體倉位的 %", min_value=0.0, max_value=100.0, step=0.1, key='sb_risk_pct', on_change=update_sl)
+
+    st.divider()
+    
+    mkt_cond = st.selectbox("市場環境", ["Trending Up", "Trending Down", "Range/Choppy", "High Volatility", "N/A"], key='sb_mkt')
+    mistake_in = st.selectbox("錯誤標籤", ["None", "Fomo", "Revenge Trade", "Fat Finger", "Late Entry", "Moved Stop"], key='sb_mistake')
+    st_in = st.selectbox("策略 (Strategy)", ["Pullback", "Breakout", "➕ 新增..."], key='sb_strat')
+    if st_in == "➕ 新增...": st_in = st.text_input("輸入新策略名稱", key='sb_strat_new')
+    emo_in = st.select_slider("心理狀態", options=["恐慌", "猶豫", "平靜", "自信", "衝動"], value="平靜", key='sb_emo')
+    note_in = st.text_area("決策筆記", key='sb_note')
+    img_file = st.file_uploader("📸 上傳圖表截圖", type=['png','jpg','jpeg'], key='sb_img')
+    
+    if st.button("儲存執行紀錄", type="primary", use_container_width=True):
+        if s_in and q_in is not None and p_in is not None:
+            assigned_tid = "N/A"
+            if not is_sell_toggle: # Buy
+                if s_in in active_pos_temp:
+                    assigned_tid = active_pos_temp[s_in]['trade_id']
+                else:
+                    assigned_tid = int(time.time())
+            else: # Sell
+                if s_in in active_pos_temp:
+                    assigned_tid = active_pos_temp[s_in]['trade_id']
+                else:
+                    st.error("找不到該標的的開倉紀錄，無法匹配 Trade_ID")
+            img_path = None
+            if img_file is not None:
+                ts_str = str(int(time.time()))
+                img_path = os.path.join("images", f"{ts_str}_{img_file.name}")
+                with open(img_path, "wb") as f:
+                    f.write(img_file.getbuffer())
+            
+            save_transaction({
+                "Date": d_in.strftime('%Y-%m-%d'), "Symbol": s_in, "Action": act_in, 
+                "Strategy": clean_strategy(st_in), "Price": p_in, "Quantity": q_in, 
+                "Stop_Loss": sl_in if sl_in is not None else 0.0, "Fees": 0, 
+                "Emotion": emo_in, "Risk_Reward": 0, 
+                "Notes": note_in, "Timestamp": int(time.time()), 
+                "Market_Condition": mkt_cond, "Mistake_Tag": mistake_in,
+                "Img": img_path, "Trade_ID": assigned_tid
+            })
+            st.success(f"已儲存 {s_in}")
+            
+            # 手動清空輸入 (因為沒有 st.form 了)
+            st.session_state.sb_price = 0.0
+            st.session_state.sb_qty = 0.0
+            st.session_state.sb_sl = 0.0
+            st.session_state.sb_pos_pct = 0.0
+            st.session_state.sb_risk_pct = 0.0
+            st.session_state.sb_note = ""
+            time.sleep(0.5)
+            st.rerun()
 
 # 計算主要數據
 active_pos, realized_pnl_total_hkd, completed_trades_df, equity_df, exp_val, exp_r_val, avg_dur_val, pl_ratio_val, mdd_val, max_wins_val, max_losses_val, avg_risk_val = calculate_portfolio(df)
@@ -570,7 +642,9 @@ with t1:
     st.divider()
     
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("若全體止損回撤", mask_val(-potential_stop_loss_impact, "-${:,.0f}"), delta_color="inverse", help="若所有當前持倉立刻打到止損價，帳戶市值將減少的金額")
+    # 修正：移除 mask_val 中的負號，因為 potential_stop_loss_impact 為正數時要顯示為負
+    # 這裡我們傳入 potential_stop_loss_impact (正值)，格式字串為 "-${...}"，結果為 -$100
+    k1.metric("若全體止損回撤", mask_val(potential_stop_loss_impact, "-${:,.0f}"), delta_color="inverse", help="若所有當前持倉立刻打到止損價，帳戶市值將減少的金額")
     k2.metric("連勝 / 連敗", f"🔥{max_wins_val} / 🧊{max_losses_val}")
     k3.metric("平均單筆風險 %", f"{avg_risk_val:.2f}%", help="平均每筆虧損單佔當時本金的百分比 (建議控制在 1-2%)")
     k4.metric("目前帳戶預估", mask_val(INITIAL_CAPITAL + realized_pnl_total_hkd, "${:,.0f}"))
