@@ -653,9 +653,9 @@ with t1:
     # 這裡我們傳入 potential_stop_loss_impact (正值)，格式字串為 "-${...}"，結果為 -$100
     k1.metric("若全體止損回撤", mask_val(potential_stop_loss_impact, "-${:,.0f}"), delta_color="inverse", help="若所有當前持倉立刻打到止損價，帳戶市值將減少的金額")
     if max_wins_val > 0:
-        k2.metric("🔥 連勝狀態", f"{max_wins_val} 連勝")
+        k2.metric("🔥 連勝狀態", f"🔥{max_wins_val} ")
     elif max_losses_val > 0:
-        k2.metric("🧊 連敗狀態", f"{max_losses_val} 連敗")
+        k2.metric("🧊 連敗狀態", f"🧊{max_losses_val}")
     else:
         k2.metric("交易狀態", "無連續紀錄")
 
@@ -908,5 +908,6 @@ with t5:
         save_all_data(pd.DataFrame(columns=df.columns))
         st.success("數據已清空")
         st.rerun()
+
 
 
