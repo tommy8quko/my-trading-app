@@ -400,19 +400,27 @@ def calculate_portfolio(df):
             drawdown = eq_series - rolling_max
             max_drawdown = drawdown.min()
         
-        # 3. 連勝連敗計算 (Consecutive Wins/Losses)
-        pnl_series = (comp_df['PnL_HKD'] > 0).astype(int)
-        # 0 表示虧損, 1 表示獲利. 透過 diff 找出變化點，cumsum 分組
-        groups = (pnl_series != pnl_series.shift()).cumsum()
-        streaks = pnl_series.groupby(groups).agg(['count', 'first']) # count=長度, first=是勝是負
-        
-        # 勝的 streak
-        win_streaks = streaks[streaks['first'] == 1]['count']
-        max_wins = win_streaks.max() if not win_streaks.empty else 0
-        
-        # 敗的 streak
-        loss_streaks = streaks[streaks['first'] == 0]['count']
-        max_losses = loss_streaks.max() if not loss_streaks.empty else 0
+        # 3. 連勝連敗計算 - 最新狀態（最近在連勝/連敗幾筆）
+        if not comp_df.empty:
+            # 按出場日期排序，最新交易在最後
+            comp_df_sorted = comp_df.sort_values('Exit_Date').reset_index(drop=True)
+            pnl_series = (comp_df_sorted['PnL_HKD'] > 0).astype(int)
+            
+            # 找出最後一個 streak
+            last_group = (pnl_series != pnl_series.shift()).cumsum().iloc[-1]
+            current_streak_group = pnl_series.groupby((pnl_series != pnl_series.shift()).cumsum())
+            current_streak = current_streak_group.last().iloc[-1]  # 最後一組的結果（1=勝，0=敗）
+            current_streak_length = len(current_streak_group.get_group(last_group))  # 目前連續幾筆
+            
+            if current_streak == 1:
+                max_wins = current_streak_length  # 最近在連勝 X 筆
+                max_losses = 0  # 不是連敗
+            else:
+                max_losses = current_streak_length  # 最近在連敗 X 筆
+                max_wins = 0  # 不是連勝
+        else:
+            max_wins, max_losses = 0, 0
+
         
         # 4. Risk Per Trade (單筆風險佔帳戶比)
         # 假設帳戶餘額 = 初始本金 + 當前已實現損益 (粗略估算)
@@ -644,7 +652,13 @@ with t1:
     # 修正：移除 mask_val 中的負號，因為 potential_stop_loss_impact 為正數時要顯示為負
     # 這裡我們傳入 potential_stop_loss_impact (正值)，格式字串為 "-${...}"，結果為 -$100
     k1.metric("若全體止損回撤", mask_val(potential_stop_loss_impact, "-${:,.0f}"), delta_color="inverse", help="若所有當前持倉立刻打到止損價，帳戶市值將減少的金額")
-    k2.metric("連勝 / 連敗", f"🔥{max_wins_val} / 🧊{max_losses_val}")
+    if max_wins_val > 0:
+        k2.metric("🔥 連勝狀態", f"{max_wins_val} 連勝")
+    elif max_losses_val > 0:
+        k2.metric("🧊 連敗狀態", f"{max_losses_val} 連敗")
+    else:
+        k2.metric("交易狀態", "無連續紀錄")
+
     k3.metric("平均單筆風險 %", f"{avg_risk_val:.2f}%", help="平均每筆虧損單佔當時本金的百分比 (建議控制在 1-2%)")
     k4.metric("目前帳戶預估", mask_val(INITIAL_CAPITAL + realized_pnl_total_hkd, "${:,.0f}"))
     
@@ -894,4 +908,5 @@ with t5:
         save_all_data(pd.DataFrame(columns=df.columns))
         st.success("數據已清空")
         st.rerun()
+
 
