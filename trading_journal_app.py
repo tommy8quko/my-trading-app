@@ -512,9 +512,17 @@ active_pos, realized_pnl_total_hkd, completed_trades_df, equity_df, exp_val, exp
 t1, t2, t3, t4, t5 = st.tabs(["📈 績效矩陣", "🔥 持倉 & 報價", "🔄 交易重播", "🧠 心理 & 歷史", "🛠️ 數據管理"])
 
 with t1:
-    st.subheader("📊 績效概覽")
-    time_frame = st.selectbox("統計時間範圍", ["全部記錄", "本週 (This Week)", "本月 (This Month)", "最近 3個月 (Last 3M)", "今年 (YTD)"], index=0)
     
+    # --- UI 調整: 將隱私開關與時間過濾器並排 ---
+    c_header, c_toggle = st.columns([5, 2])
+    with c_header:
+        st.subheader("📊 績效概覽")
+        time_frame = st.selectbox("統計時間範圍", ["全部記錄", "本週 (This Week)", "本月 (This Month)", "最近 3個月 (Last 3M)", "今年 (YTD)"], index=0)
+    with c_toggle:
+        st.write("") # Spacer
+        st.write("") 
+        private_mode = st.toggle("🙈 隱私模式", value=False, help="隱藏敏感金額數據，適合公開展示")
+
     filtered_comp = completed_trades_df.copy()
     if not filtered_comp.empty:
         filtered_comp['Entry_DT'] = pd.to_datetime(filtered_comp['Entry_Date'])
@@ -544,30 +552,35 @@ with t1:
     for s, d in active_pos.items():
         curr_price = live_prices.get(s)
         if curr_price and d['last_sl'] > 0:
-            # 風險 = (現價 - 止損價) * 股數。正值代表我們現在離止損有多遠(權益保護空間)，
-            # 但題目問「若全部止損帳戶會下調多少」，意指我們現在的市值比起止損後的市值會縮水多少。
-            # 也就是 (Current Value - Stop Value)。這是我們「現在擁有但可能會吐回去」的錢。
+            # 風險 = (現價 - 止損價) * 股數
             impact = (curr_price - d['last_sl']) * d['qty']
             potential_stop_loss_impact += get_hkd_value(s, impact)
-            
+    
+    # --- 隱私模式遮罩 Helper ---
+    mask_val = lambda v, fmt: "****" if private_mode else fmt.format(v)
+
     m1, m2, m3, m4, m5, m6 = st.columns(6)
-    m1.metric("已實現損益 (HKD)", f"${f_pnl:,.2f}")
+    m1.metric("已實現損益 (HKD)", mask_val(f_pnl, "${:,.2f}"))
     m2.metric("期望值 (R)", f"{exp_r_val:.2f}R", help="修正公式：(勝率 x 平均贏R) - (敗率 x 平均輸R)")
     m3.metric("勝率", f"{win_r:.1f}%")
     m4.metric("盈虧比", f"{pl_ratio_val:.2f}")
-    m5.metric("最大回撤", f"${mdd_val:,.0f}", delta_color="inverse")
+    m5.metric("最大回撤", mask_val(mdd_val, "${:,.0f}"), delta_color="inverse")
     m6.metric("交易場數", f"{trade_count}")
     
     st.divider()
     
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("若全體止損回撤", f"-${potential_stop_loss_impact:,.0f}", delta_color="inverse", help="若所有當前持倉立刻打到止損價，帳戶市值將減少的金額")
+    k1.metric("若全體止損回撤", mask_val(-potential_stop_loss_impact, "-${:,.0f}"), delta_color="inverse", help="若所有當前持倉立刻打到止損價，帳戶市值將減少的金額")
     k2.metric("連勝 / 連敗", f"🔥{max_wins_val} / 🧊{max_losses_val}")
     k3.metric("平均單筆風險 %", f"{avg_risk_val:.2f}%", help="平均每筆虧損單佔當時本金的百分比 (建議控制在 1-2%)")
-    k4.metric("目前帳戶預估", f"${(INITIAL_CAPITAL + realized_pnl_total_hkd):,.0f}")
+    k4.metric("目前帳戶預估", mask_val(INITIAL_CAPITAL + realized_pnl_total_hkd, "${:,.0f}"))
     
     if not equity_df.empty:
-        st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", title="累計損益曲線"), use_container_width=True)
+        # 如果是隱私模式，隱藏 Y 軸數值
+        fig_equity = px.area(equity_df, x="Date", y="Cumulative PnL", title="累計損益曲線")
+        if private_mode:
+            fig_equity.update_yaxes(showticklabels=False)
+        st.plotly_chart(fig_equity, use_container_width=True)
     
     # --- AI 交易教練洞察 ---
     st.divider()
@@ -591,8 +604,8 @@ with t1:
         st.divider()
         st.subheader("🏆 週期成交排行榜")
         display_trades = filtered_comp.copy()
-        display_trades['原始損益'] = display_trades.apply(lambda x: f"{get_currency_symbol(x['Symbol'])} {x['PnL_Raw']:,.2f}", axis=1)
-        display_trades['HKD 損益'] = display_trades['PnL_HKD'].apply(lambda x: f"${x:,.2f}")
+        display_trades['原始損益'] = display_trades.apply(lambda x: mask_val(x['PnL_Raw'], "{} {:,.2f}".format(get_currency_symbol(x['Symbol']), x['PnL_Raw'])) if not private_mode else "****", axis=1)
+        display_trades['HKD 損益'] = display_trades['PnL_HKD'].apply(lambda x: mask_val(x, "${:,.2f}"))
         display_trades['R 乘數'] = display_trades['Trade_R'].apply(lambda x: f"{x:.2f}R" if pd.notnull(x) else "N/A")
         display_trades = display_trades.rename(columns={"Exit_Date": "出場日期", "Symbol": "代號"})
         
