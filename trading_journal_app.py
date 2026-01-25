@@ -1,13 +1,12 @@
 import streamlit as st
 import pandas as pd
 import os
-import requests
 import time
 import yfinance as yf
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-import io
+import numpy as np
 
 # Google Sheets 連線庫
 try:
@@ -18,11 +17,18 @@ except ImportError:
 # Google Gemini AI 庫
 import google.generativeai as genai
 
+# 第三方備援庫 (OpenAI 兼容接口)
+try:
+    from openai import OpenAI
+except ImportError:
+    pass 
+
 
 # --- 1. 核心配置與初始化 ---
 
 FILE_NAME = "trade_ledger_v_final.csv"
 USD_HKD_RATE = 7.8
+INITIAL_CAPITAL = 1600000  # 初始本金 1.6M HKD
 
 if not os.path.exists("images"):
     os.makedirs("images")
@@ -49,10 +55,9 @@ def get_ai_model():
     genai.configure(api_key=GEMINI_API_KEY)
     
     # 策略：包含 1.5-flash 以確保穩定
-    candidate_models = ['gemini-3-flash-preview', 
-                        'gemini-2.5-flash', 
-                        'gemini-2.5-flash-lite', 
-                        'gemini-2.0-flash-lite', 
+    candidate_models = ['gemini-2.0-flash-lite', 
+                        'gemini-1.5-flash', 
+                        'gemini-1.5-pro',
     ]
     
     last_error = ""
@@ -60,6 +65,7 @@ def get_ai_model():
     for model_name in candidate_models:
         try:
             m = genai.GenerativeModel(model_name)
+            # 簡單測試 ping
             m.generate_content("ping", generation_config={"max_output_tokens": 1})
             return m, None
         except Exception as e:
@@ -111,8 +117,8 @@ def generate_llm_export_data(df, stats_summary):
     # 構建 Prompt 式的文本內容
     export_content = f"""
 === 🕵️‍♂️ AI TRADING JOURNAL REVIEW CONTEXT ===
-You are an expert Trading Coach, Data Analyst,a panel of legendary stock traders Mark Minervini and David Ryan. The user has uploaded their trading journal data.
-Your goal is to analyze this data to find patterns in their mistakes, evaluate their strategy performance, and suggest improvements.Be critical and direct.
+You are an expert Trading Coach, Data Analyst, a panel of legendary stock traders Mark Minervini and David Ryan. The user has uploaded their trading journal data.
+Your goal is to analyze this data to find patterns in their mistakes, evaluate their strategy performance, and suggest improvements. Be critical and direct.
 
 === 📊 CURRENT PERFORMANCE SUMMARY ===
 - Total Realized PnL: {stats_summary.get('pnl_str', 'N/A')}
@@ -121,6 +127,7 @@ Your goal is to analyze this data to find patterns in their mistakes, evaluate t
 - Expectancy (R): {stats_summary.get('exp_r', 'N/A')}
 - Max Drawdown: {stats_summary.get('mdd', 'N/A')}
 - Total Trades: {stats_summary.get('count', 'N/A')}
+- Initial Capital: {INITIAL_CAPITAL} HKD
 
 === 📖 DATA DICTIONARY ===
 - Trade_R: Risk multiple (Profit / Initial Risk). >1 is good, < -1 is bad risk management.
@@ -232,7 +239,8 @@ def get_currency_symbol(symbol):
 
 @st.cache_data(ttl=60)
 def calculate_portfolio(df):
-    if df.empty: return {}, 0, pd.DataFrame(), pd.DataFrame(), 0, 0, 0, 0, 0
+    if df.empty: 
+        return {}, 0, pd.DataFrame(), pd.DataFrame(), 0, 0, 0, 0, 0, 0, 0, 0
     
     positions = {} 
     df = df.sort_values(by="Timestamp")
@@ -243,6 +251,7 @@ def calculate_portfolio(df):
     active_trade_by_symbol = {} # Key: Symbol, Value: Trade_ID
     completed_trades = [] 
     equity_curve = []
+    
     for _, row in df.iterrows():
         sym = format_symbol(row['Symbol']) 
         action = str(row['Action']) if pd.notnull(row['Action']) else ""
@@ -253,9 +262,12 @@ def calculate_portfolio(df):
         t_id = row.get('Trade_ID')
         if pd.isna(t_id) or t_id == "N/A":
             t_id = f"LEGACY_{sym}" 
+            
         is_buy = any(word in action.upper() for word in ["買入", "BUY", "B"])
         is_sell = any(word in action.upper() for word in ["賣出", "SELL", "S"])
+        
         current_trade_id = None
+        
         if is_buy:
             if sym in active_trade_by_symbol:
                 current_trade_id = active_trade_by_symbol[sym]
@@ -292,6 +304,7 @@ def calculate_portfolio(df):
             curr['qty'] += qty
             if curr['qty'] > 0: curr['avg_price'] = total_cost_base / curr['qty']
             if sl > 0: curr['last_sl'] = sl
+            
         elif is_sell and sym in active_trade_by_symbol:
             current_trade_id = active_trade_by_symbol[sym]
             cycle_data = cycle_tracker[current_trade_id]
@@ -306,6 +319,7 @@ def calculate_portfolio(df):
             
             curr['qty'] -= sell_qty
             if sl > 0: curr['last_sl'] = sl
+            
             if curr['qty'] < 0.0001:
                 pnl_raw = cycle_data['cash_flow_raw']
                 init_risk = cycle_data['initial_risk_raw']
@@ -335,15 +349,40 @@ def calculate_portfolio(df):
                 if sym in positions: del positions[sym]
             
             equity_curve.append({"Date": date_str, "Cumulative PnL": running_pnl_hkd})
+            
     comp_df = pd.DataFrame(completed_trades)
     active_output = {s: p for s, p in positions.items() if s in active_trade_by_symbol}
+    
+    # 填補 Active Positions 詳情
     for s, p in active_output.items():
         tid = active_trade_by_symbol[s]
         p['entry_price'] = cycle_tracker[tid]['Entry_Price']
         p['entry_sl'] = cycle_tracker[tid]['Entry_SL']
+    
     exp_hkd, exp_r, avg_dur, profit_loss_ratio, max_drawdown = 0, 0, 0, 0, 0
+    max_wins, max_losses = 0, 0
+    avg_risk_per_trade = 0
+    
     if not comp_df.empty:
-        wins, losses = comp_df[comp_df['PnL_HKD'] > 0], comp_df[comp_df['PnL_HKD'] <= 0]
+        wins = comp_df[comp_df['PnL_HKD'] > 0]
+        losses = comp_df[comp_df['PnL_HKD'] <= 0]
+        
+        # 1. 修正 Expectancy (R) 計算
+        valid_r_trades = comp_df[comp_df['Trade_R'].notna()]
+        if not valid_r_trades.empty:
+            win_r_trades = valid_r_trades[valid_r_trades['Trade_R'] > 0]
+            loss_r_trades = valid_r_trades[valid_r_trades['Trade_R'] <= 0]
+            
+            win_rate_r = len(win_r_trades) / len(valid_r_trades)
+            avg_r_win = win_r_trades['Trade_R'].mean() if not win_r_trades.empty else 0
+            avg_r_loss = abs(loss_r_trades['Trade_R'].mean()) if not loss_r_trades.empty else 0
+            
+            # ✅ 公式修正：(勝率 x 平均獲利R) - (敗率 x 平均虧損R)
+            exp_r = (win_rate_r * avg_r_win) - ((1 - win_rate_r) * avg_r_loss)
+        else:
+            exp_r = 0
+            
+        # PnL Expectancy
         wr = len(wins) / len(comp_df)
         avg_win = wins['PnL_HKD'].mean() if not wins.empty else 0
         avg_loss = abs(losses['PnL_HKD'].mean()) if not losses.empty else 0
@@ -352,16 +391,45 @@ def calculate_portfolio(df):
         if avg_loss > 0:
             profit_loss_ratio = avg_win / avg_loss
         
-        valid_r_trades = comp_df[comp_df['Trade_R'].notna()]
-        exp_r = valid_r_trades['Trade_R'].mean() if not valid_r_trades.empty else 0
         avg_dur = comp_df['Duration_Days'].mean()
         
+        # 2. Max Drawdown
         if equity_curve:
             eq_series = pd.DataFrame(equity_curve)['Cumulative PnL']
             rolling_max = eq_series.cummax()
             drawdown = eq_series - rolling_max
             max_drawdown = drawdown.min()
-    return active_output, total_realized_pnl_hkd, comp_df, pd.DataFrame(equity_curve), exp_hkd, exp_r, avg_dur, profit_loss_ratio, max_drawdown
+        
+        # 3. 連勝連敗計算 (Consecutive Wins/Losses)
+        pnl_series = (comp_df['PnL_HKD'] > 0).astype(int)
+        # 0 表示虧損, 1 表示獲利. 透過 diff 找出變化點，cumsum 分組
+        groups = (pnl_series != pnl_series.shift()).cumsum()
+        streaks = pnl_series.groupby(groups).agg(['count', 'first']) # count=長度, first=是勝是負
+        
+        # 勝的 streak
+        win_streaks = streaks[streaks['first'] == 1]['count']
+        max_wins = win_streaks.max() if not win_streaks.empty else 0
+        
+        # 敗的 streak
+        loss_streaks = streaks[streaks['first'] == 0]['count']
+        max_losses = loss_streaks.max() if not loss_streaks.empty else 0
+        
+        # 4. Risk Per Trade (單筆風險佔帳戶比)
+        # 假設帳戶餘額 = 初始本金 + 當前已實現損益 (粗略估算)
+        # 這裡計算的是 "實際發生的虧損佔本金比例"
+        current_equity = INITIAL_CAPITAL + total_realized_pnl_hkd
+        # 避免除以 0
+        base_capital = current_equity if current_equity > 0 else INITIAL_CAPITAL
+        
+        # 計算每筆交易的絕對虧損佔帳戶的 %
+        comp_df['Risk_Per_Trade_Pct'] = (abs(comp_df['PnL_HKD']) / base_capital * 100)
+        # 只看虧損交易的平均風險
+        l_trades = comp_df[comp_df['PnL_HKD'] < 0]
+        if not l_trades.empty:
+            avg_risk_per_trade = l_trades['Risk_Per_Trade_Pct'].mean()
+        
+    # Return 擴增
+    return active_output, total_realized_pnl_hkd, comp_df, pd.DataFrame(equity_curve), exp_hkd, exp_r, avg_dur, profit_loss_ratio, max_drawdown, max_wins, max_losses, avg_risk_per_trade
 
 @st.cache_data(ttl=60)
 def get_live_prices(symbols_list):
@@ -387,7 +455,7 @@ df = load_data()
 # Sidebar: Trade Form
 with st.sidebar:
     st.header("⚡ 執行面板")
-    active_pos_temp, _, _, _, _, _, _, _, _ = calculate_portfolio(df)
+    active_pos_temp, _, _, _, _, _, _, _, _, _, _, _ = calculate_portfolio(df)
     
     with st.form("trade_form", clear_on_submit=True):
         d_in = st.date_input("日期")
@@ -439,7 +507,7 @@ with st.sidebar:
                 st.success(f"已儲存 {s_in}"); time.sleep(0.5); st.rerun()
 
 # 計算主要數據
-active_pos, realized_pnl_total_hkd, completed_trades_df, equity_df, exp_val, exp_r_val, avg_dur_val, pl_ratio_val, mdd_val = calculate_portfolio(df)
+active_pos, realized_pnl_total_hkd, completed_trades_df, equity_df, exp_val, exp_r_val, avg_dur_val, pl_ratio_val, mdd_val, max_wins_val, max_losses_val, avg_risk_val = calculate_portfolio(df)
 
 t1, t2, t3, t4, t5 = st.tabs(["📈 績效矩陣", "🔥 持倉 & 報價", "🔄 交易重播", "🧠 心理 & 歷史", "🛠️ 數據管理"])
 
@@ -449,7 +517,6 @@ with t1:
     
     filtered_comp = completed_trades_df.copy()
     if not filtered_comp.empty:
-        # ⚠️ 修改重點：統一使用 Exit_DT (出場時間) 進行篩選
         filtered_comp['Entry_DT'] = pd.to_datetime(filtered_comp['Entry_Date'])
         filtered_comp['Exit_DT'] = pd.to_datetime(filtered_comp['Exit_Date'])
         today = datetime.now()
@@ -466,18 +533,39 @@ with t1:
             mask = (filtered_comp['Exit_DT'] >= cutoff)
         else: mask = [True] * len(filtered_comp)
         filtered_comp = filtered_comp[mask]
+    
     f_pnl = filtered_comp['PnL_HKD'].sum() if not filtered_comp.empty else 0
     trade_count = len(filtered_comp)
     win_r = (len(filtered_comp[filtered_comp['PnL_HKD'] > 0]) / trade_count * 100) if trade_count > 0 else 0
-    f_dur = filtered_comp['Duration_Days'].mean() if not filtered_comp.empty else 0
     
+    # 計算即時持倉的潛在風險 (若全體止損)
+    live_prices = get_live_prices(list(active_pos.keys()))
+    potential_stop_loss_impact = 0
+    for s, d in active_pos.items():
+        curr_price = live_prices.get(s)
+        if curr_price and d['last_sl'] > 0:
+            # 風險 = (現價 - 止損價) * 股數。正值代表我們現在離止損有多遠(權益保護空間)，
+            # 但題目問「若全部止損帳戶會下調多少」，意指我們現在的市值比起止損後的市值會縮水多少。
+            # 也就是 (Current Value - Stop Value)。這是我們「現在擁有但可能會吐回去」的錢。
+            impact = (curr_price - d['last_sl']) * d['qty']
+            potential_stop_loss_impact += get_hkd_value(s, impact)
+            
     m1, m2, m3, m4, m5, m6 = st.columns(6)
     m1.metric("已實現損益 (HKD)", f"${f_pnl:,.2f}")
-    m2.metric("期望值 (R)", f"{exp_r_val:.2f}R")
+    m2.metric("期望值 (R)", f"{exp_r_val:.2f}R", help="修正公式：(勝率 x 平均贏R) - (敗率 x 平均輸R)")
     m3.metric("勝率", f"{win_r:.1f}%")
     m4.metric("盈虧比", f"{pl_ratio_val:.2f}")
     m5.metric("最大回撤", f"${mdd_val:,.0f}", delta_color="inverse")
     m6.metric("交易場數", f"{trade_count}")
+    
+    st.divider()
+    
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("若全體止損回撤", f"-${potential_stop_loss_impact:,.0f}", delta_color="inverse", help="若所有當前持倉立刻打到止損價，帳戶市值將減少的金額")
+    k2.metric("連勝 / 連敗", f"🔥{max_wins_val} / 🧊{max_losses_val}")
+    k3.metric("平均單筆風險 %", f"{avg_risk_val:.2f}%", help="平均每筆虧損單佔當時本金的百分比 (建議控制在 1-2%)")
+    k4.metric("目前帳戶預估", f"${(INITIAL_CAPITAL + realized_pnl_total_hkd):,.0f}")
+    
     if not equity_df.empty:
         st.plotly_chart(px.area(equity_df, x="Date", y="Cumulative PnL", title="累計損益曲線"), use_container_width=True)
     
@@ -492,10 +580,12 @@ with t1:
                 "PnL": f_pnl, 
                 "WinRate": f"{win_r:.1f}%",
                 "ExpR": exp_r_val, 
-                "Mistakes": filtered_comp['Mistake_Tag'].value_counts().to_dict()
+                "Mistakes": filtered_comp['Mistake_Tag'].value_counts().to_dict(),
+                "ConsecutiveLosses": max_losses_val
             }
             prompt = f"請根據以下交易統計給出深度專業建議：{stats}。請分析錯誤標籤，並給出三個下週改進動作。請用繁體中文，語氣要像專業交易導師。"
             st.markdown(get_ai_response(prompt))
+            
     # --- 還原交易排行榜格式 ---
     if not filtered_comp.empty:
         st.divider()
@@ -535,7 +625,7 @@ with t2:
                 "代號": s, "持股數": f"{qty:,.0f}", "平均成本": f"{avg_p:,.2f}", 
                 "現價": f"{now:,.2f}" if now else "N/A", "當前止損": f"{last_sl:,.2f}", 
                 "初始風險": f"{init_risk:,.2f}",
-                "當前風險": f"{curr_risk:,.2f}",
+                "當前風險(Open)": f"{curr_risk:,.2f}",
                 "當前R": f"{curr_r:.2f}R",
                 "未實現損益": f"{un_pnl:,.2f}", "報酬%": roi
             })
@@ -576,16 +666,66 @@ with t3:
 with t4:
     st.subheader("📜 心理 & 歷史分析")
     if not completed_trades_df.empty:
-        c1, c2 = st.columns(2)
-        valid_r = completed_trades_df[completed_trades_df['Trade_R'].notna()]
-        with c1:
-            mistake_r = valid_r[valid_r['Mistake_Tag'] != "None"].groupby('Mistake_Tag')['Trade_R'].mean().reset_index()
-            if not mistake_r.empty:
-                st.plotly_chart(px.bar(mistake_r, x='Mistake_Tag', y='Trade_R', title="平均 R 乘數 (按錯誤標籤)", color='Trade_R', color_continuous_scale='RdYlGn'), use_container_width=True)
-        with c2:
-            emo_r = valid_r.groupby('Emotion')['Trade_R'].mean().reset_index()
-            if not emo_r.empty:
-                st.plotly_chart(px.bar(emo_r, x='Emotion', y='Trade_R', title="平均 R 乘數 (按情緒)", color='Trade_R', color_continuous_scale='RdYlGn'), use_container_width=True)
+        
+        # 1. 錯誤影響分析 (Mistake Impact)
+        st.markdown("#### 🚨 錯誤代價分析 (Cost of Mistakes)")
+        mistake_impact = completed_trades_df.groupby('Mistake_Tag').agg({
+            'PnL_HKD': ['sum', 'count'],
+            'Trade_R': 'mean'
+        }).reset_index()
+        mistake_impact.columns = ['錯誤類型', '總虧損(HKD)', '次數', '平均R']
+        mistake_impact['總虧損(HKD)'] = mistake_impact['總虧損(HKD)'].round(0)
+        mistake_impact['平均R'] = mistake_impact['平均R'].round(2)
+        
+        c_mis1, c_mis2 = st.columns([1, 2])
+        with c_mis1:
+            st.dataframe(mistake_impact.sort_values('總虧損(HKD)'), hide_index=True, use_container_width=True)
+        with c_mis2:
+             st.plotly_chart(px.bar(mistake_impact, x='錯誤類型', y='總虧損(HKD)', color='總虧損(HKD)', color_continuous_scale='RdYlGn', title="哪種錯誤最燒錢？"), use_container_width=True)
+
+        st.divider()
+
+        # 2. 策略與市場環境
+        c_st1, c_st2 = st.columns(2)
+        
+        with c_st1:
+            st.markdown("#### ⚔️ 策略勝率 (Strategy Breakdown)")
+            strat_stats = completed_trades_df.groupby('Strategy').agg({
+                'PnL_HKD': 'sum',
+                'Trade_R': 'mean',
+                'Symbol': 'count' # use Symbol count as trade count
+            }).reset_index().rename(columns={'Symbol': '次數', 'PnL_HKD': '總損益'})
+            strat_stats['總損益'] = strat_stats['總損益'].round(0)
+            strat_stats['Trade_R'] = strat_stats['Trade_R'].round(2)
+            st.dataframe(strat_stats.sort_values('Trade_R', ascending=False), hide_index=True, use_container_width=True)
+
+        with c_st2:
+            st.markdown("#### 🌊 市場環境適應性 (Market Condition)")
+            mkt_stats = completed_trades_df.groupby('Market_Condition').agg({
+                'PnL_HKD': 'sum',
+                'Trade_R': 'mean'
+            }).reset_index()
+            mkt_stats['PnL_HKD'] = mkt_stats['PnL_HKD'].round(0)
+            mkt_stats['Trade_R'] = mkt_stats['Trade_R'].round(2)
+            st.dataframe(mkt_stats.sort_values('Trade_R', ascending=False), hide_index=True, use_container_width=True)
+
+        st.divider()
+
+        # 3. 持倉時間分析 (Duration Analysis)
+        st.markdown("#### ⏳ 持倉時間與獲利關係 (Time vs PnL)")
+        dur_bins = [0, 1, 5, 20, 100, 999]
+        dur_labels = ['當沖 (0-1天)', '短線 (2-5天)', '波段 (6-20天)', '長波段 (20-100天)', '長線 (>100天)']
+        
+        temp_df = completed_trades_df.copy()
+        temp_df['Duration_Bin'] = pd.cut(temp_df['Duration_Days'], bins=dur_bins, labels=dur_labels, right=True)
+        
+        dur_stats = temp_df.groupby('Duration_Bin', observed=True)['PnL_HKD'].agg(['sum', 'mean', 'count']).reset_index()
+        dur_stats.columns = ['持有週期', '總損益', '平均損益', '次數']
+        dur_stats['總損益'] = dur_stats['總損益'].round(0)
+        dur_stats['平均損益'] = dur_stats['平均損益'].round(0)
+        
+        st.plotly_chart(px.bar(dur_stats, x='持有週期', y='總損益', color='總損益', title="不同週期的獲利表現", color_continuous_scale='RdYlGn'), use_container_width=True)
+
     if not df.empty:
         st.divider()
         hist_df = df.sort_values("Timestamp", ascending=False).copy()
