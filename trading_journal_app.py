@@ -739,6 +739,11 @@ with t1:
 
 with t2:
     st.markdown("### 🟢 持倉概覽")
+    
+     if 'edit_mode' not in st.session_state:
+        st.session_state.edit_mode = False
+        st.session_state.edit_symbol = None
+         
     if active_pos:
         live_prices = get_live_prices(list(active_pos.keys()))
         processed_p_data = []
@@ -941,6 +946,7 @@ with t5:
         save_all_data(pd.DataFrame(columns=df.columns))
         st.success("數據已清空")
         st.rerun()
+
 
 
 
