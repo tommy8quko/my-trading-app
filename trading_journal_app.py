@@ -38,7 +38,6 @@ st.set_page_config(page_title="TradeMaster Pro UI", layout="wide")
 # --- AI 配置 (優化版：節省配額 + 雙引擎架構) ---
 
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
-# 如果你有備援的 Key (例如 DeepSeek 或 Groq)，可以設定在這裡，否則留空
 BACKUP_API_KEY = st.secrets.get("BACKUP_API_KEY", "") 
 BACKUP_BASE_URL = st.secrets.get("BACKUP_BASE_URL", "https://api.deepseek.com") 
 
@@ -54,7 +53,6 @@ def get_ai_model():
     
     genai.configure(api_key=GEMINI_API_KEY)
     
-    # 策略：包含 1.5-flash 以確保穩定
     candidate_models = ['gemini-2.0-flash-lite', 
                         'gemini-1.5-flash', 
                         'gemini-1.5-pro',
@@ -65,7 +63,6 @@ def get_ai_model():
     for model_name in candidate_models:
         try:
             m = genai.GenerativeModel(model_name)
-            # 簡單測試 ping
             m.generate_content("ping", generation_config={"max_output_tokens": 1})
             return m, None
         except Exception as e:
@@ -74,7 +71,6 @@ def get_ai_model():
             
     return None, last_error
 
-# 初始化模型
 model, init_error = get_ai_model()
 
 def get_ai_response(prompt):
@@ -82,22 +78,20 @@ def get_ai_response(prompt):
     if not GEMINI_API_KEY:
         return "⚠️ 請先在 Streamlit Secrets 設定 GEMINI_API_KEY。"
     
-    # 1. 嘗試 Gemini
     if model:
         try:
             with st.spinner(f"🤖 AI 交易教練正在分析中 (Gemini)..."):
                 response = model.generate_content(prompt)
                 return response.text
         except Exception:
-            pass # 失敗則進入備援
+            pass
             
-    # 2. 嘗試備援 (如果有的話)
     if BACKUP_API_KEY:
         try:
             with st.spinner(f"⚠️ 切換至備援 AI 分析中..."):
                 client = OpenAI(api_key=BACKUP_API_KEY, base_url=BACKUP_BASE_URL)
                 response = client.chat.completions.create(
-                    model="deepseek-chat", # 或 gpt-4o-mini, llama-3 等
+                    model="deepseek-chat",
                     messages=[{"role": "user", "content": prompt}]
                 )
                 return f"🔄 [Backup AI] {response.choices[0].message.content}"
@@ -106,13 +100,57 @@ def get_ai_response(prompt):
             
     return f"❌ 無法初始化 AI 模型或配額已滿。\nGemini 錯誤: {init_error}"
 
-# --- 新增功能：生成 AI 專用分析檔案 ---
-def generate_llm_export_data(df, stats_summary):
+# --- ✅ 新增：用於 AI 匯出的持倉計算函數 ---
+def calculate_position_percentage(active_pos, symbol, live_prices, current_equity):
     """
-    生成一個包含 Context + 統計 + 原始數據的文本，
+    計算該持倉佔整體帳戶百分比
+    Returns: (市值HKD, 佔比%)
+    """
+    pos_data = active_pos[symbol]
+    qty = pos_data['qty']
+    current_price = live_prices.get(symbol)
+    
+    if not current_price:
+        return 0, 0
+    
+    position_value_base = current_price * qty
+    position_value_hkd = get_hkd_value(symbol, position_value_base)
+    percentage = (position_value_hkd / current_equity) * 100 if current_equity > 0 else 0
+    
+    return position_value_hkd, percentage
+
+# --- ✅ 修改：生成 AI 專用分析檔案（包含持倉詳情）---
+def generate_llm_export_data(df, stats_summary, active_pos, live_prices, current_equity):
+    """
+    生成一個包含 Context + 統計 + 原始數據 + 持倉詳情 的文本，
     專門設計給外部 LLM (ChatGPT/Claude) 閱讀。
     """
     csv_data = df.to_csv(index=False)
+    
+    # ✅ 新增：生成持倉詳細列表
+    active_positions_detail = "=== 📍 CURRENT ACTIVE POSITIONS ===\n"
+    if active_pos:
+        for s, d in active_pos.items():
+            now = live_prices.get(s)
+            qty, avg_p, last_sl = d['qty'], d['avg_price'], d['last_sl']
+            un_pnl = (now - avg_p) * qty if now else 0
+            un_pnl_hkd = get_hkd_value(s, un_pnl)
+            
+            pos_value_hkd, pos_pct = calculate_position_percentage(
+                active_pos, s, live_prices, current_equity
+            )
+            
+            active_positions_detail += f"""
+Symbol: {s}
+  Quantity: {qty:,.0f}
+  Avg Entry: {avg_p:,.2f}
+  Current Price: {now:,.2f}
+  Stop Loss: {last_sl:,.2f}
+  Unrealized PnL (HKD): ${un_pnl_hkd:,.2f}
+  Position Size %: {pos_pct:.2f}%
+---"""
+    else:
+        active_positions_detail += "None\n"
     
     # 構建 Prompt 式的文本內容
     export_content = f"""
@@ -128,6 +166,9 @@ Your goal is to analyze this data to find patterns in their mistakes, evaluate t
 - Max Drawdown: {stats_summary.get('mdd', 'N/A')}
 - Total Trades: {stats_summary.get('count', 'N/A')}
 - Initial Capital: {INITIAL_CAPITAL} HKD
+- Current Account Value: ${current_equity:,.0f} HKD
+
+{active_positions_detail}
 
 === 📖 DATA DICTIONARY ===
 - Trade_R: Risk multiple (Profit / Initial Risk). >1 is good, < -1 is bad risk management.
@@ -143,8 +184,9 @@ Please analyze the data above and provide:
 1. A critique of the user's risk management based on 'Trade_R' and 'Stop_Loss'.
 2. Correlation analysis: Which 'Emotion' or 'Mistake_Tag' leads to the biggest losses?
 3. Strategy performance review: Which strategy is performing best?
-4. Three actionable steps to improve profitability based on this specific data.
-5. Answer in Traditional Chinese
+4. Analysis of current open positions: Are they properly sized? Are the stop losses at risk?
+5. Three actionable steps to improve profitability based on this specific data.
+6. Answer in Traditional Chinese
 """
     return export_content
 
@@ -195,7 +237,6 @@ def load_data():
             return pd.DataFrame()
     if df.empty: return df
     
-    # 數據類型轉換
     if 'Symbol' in df.columns: df['Symbol'] = df['Symbol'].apply(format_symbol)
     if 'Strategy' in df.columns: df['Strategy'] = df['Strategy'].apply(clean_strategy)
     for col in ["Market_Condition", "Mistake_Tag", "Img", "Trade_ID"]:
@@ -247,8 +288,8 @@ def calculate_portfolio(df):
     total_realized_pnl_hkd = 0
     running_pnl_hkd = 0
     
-    cycle_tracker = {} # Key: Trade_ID
-    active_trade_by_symbol = {} # Key: Symbol, Value: Trade_ID
+    cycle_tracker = {}
+    active_trade_by_symbol = {}
     completed_trades = [] 
     equity_curve = []
     
@@ -353,7 +394,6 @@ def calculate_portfolio(df):
     comp_df = pd.DataFrame(completed_trades)
     active_output = {s: p for s, p in positions.items() if s in active_trade_by_symbol}
     
-    # 填補 Active Positions 詳情
     for s, p in active_output.items():
         tid = active_trade_by_symbol[s]
         p['entry_price'] = cycle_tracker[tid]['Entry_Price']
@@ -367,7 +407,6 @@ def calculate_portfolio(df):
         wins = comp_df[comp_df['PnL_HKD'] > 0]
         losses = comp_df[comp_df['PnL_HKD'] <= 0]
         
-        # 1. 修正 Expectancy (R) 計算
         valid_r_trades = comp_df[comp_df['Trade_R'].notna()]
         if not valid_r_trades.empty:
             win_r_trades = valid_r_trades[valid_r_trades['Trade_R'] > 0]
@@ -377,12 +416,10 @@ def calculate_portfolio(df):
             avg_r_win = win_r_trades['Trade_R'].mean() if not win_r_trades.empty else 0
             avg_r_loss = abs(loss_r_trades['Trade_R'].mean()) if not loss_r_trades.empty else 0
             
-            # ✅ 公式修正：(勝率 x 平均獲利R) - (敗率 x 平均虧損R)
             exp_r = (win_rate_r * avg_r_win) - ((1 - win_rate_r) * avg_r_loss)
         else:
             exp_r = 0
             
-        # PnL Expectancy
         wr = len(wins) / len(comp_df)
         avg_win = wins['PnL_HKD'].mean() if not wins.empty else 0
         avg_loss = abs(losses['PnL_HKD'].mean()) if not losses.empty else 0
@@ -393,50 +430,38 @@ def calculate_portfolio(df):
         
         avg_dur = comp_df['Duration_Days'].mean()
         
-        # 2. Max Drawdown
         if equity_curve:
             eq_series = pd.DataFrame(equity_curve)['Cumulative PnL']
             rolling_max = eq_series.cummax()
             drawdown = eq_series - rolling_max
             max_drawdown = drawdown.min()
         
-        # 3. 連勝連敗計算 - 最新狀態（最近在連勝/連敗幾筆）
         if not comp_df.empty:
-            # 按出場日期排序，最新交易在最後
             comp_df_sorted = comp_df.sort_values('Exit_Date').reset_index(drop=True)
             pnl_series = (comp_df_sorted['PnL_HKD'] > 0).astype(int)
             
-            # 找出最後一個 streak
             last_group = (pnl_series != pnl_series.shift()).cumsum().iloc[-1]
             current_streak_group = pnl_series.groupby((pnl_series != pnl_series.shift()).cumsum())
-            current_streak = current_streak_group.last().iloc[-1]  # 最後一組的結果（1=勝，0=敗）
-            current_streak_length = len(current_streak_group.get_group(last_group))  # 目前連續幾筆
+            current_streak = current_streak_group.last().iloc[-1]
+            current_streak_length = len(current_streak_group.get_group(last_group))
             
             if current_streak == 1:
-                max_wins = current_streak_length  # 最近在連勝 X 筆
-                max_losses = 0  # 不是連敗
+                max_wins = current_streak_length
+                max_losses = 0
             else:
-                max_losses = current_streak_length  # 最近在連敗 X 筆
-                max_wins = 0  # 不是連勝
+                max_losses = current_streak_length
+                max_wins = 0
         else:
             max_wins, max_losses = 0, 0
 
-        
-        # 4. Risk Per Trade (單筆風險佔帳戶比)
-        # 假設帳戶餘額 = 初始本金 + 當前已實現損益 (粗略估算)
-        # 這裡計算的是 "實際發生的虧損佔本金比例"
         current_equity = INITIAL_CAPITAL + total_realized_pnl_hkd
-        # 避免除以 0
         base_capital = current_equity if current_equity > 0 else INITIAL_CAPITAL
         
-        # 計算每筆交易的絕對虧損佔帳戶的 %
         comp_df['Risk_Per_Trade_Pct'] = (abs(comp_df['PnL_HKD']) / base_capital * 100)
-        # 只看虧損交易的平均風險
         l_trades = comp_df[comp_df['PnL_HKD'] < 0]
         if not l_trades.empty:
             avg_risk_per_trade = l_trades['Risk_Per_Trade_Pct'].mean()
         
-    # Return 擴增
     return active_output, total_realized_pnl_hkd, comp_df, pd.DataFrame(equity_curve), exp_hkd, exp_r, avg_dur, profit_loss_ratio, max_drawdown, max_wins, max_losses, avg_risk_per_trade
 
 @st.cache_data(ttl=60)
@@ -461,55 +486,62 @@ def get_live_prices(symbols_list):
 df = load_data()
 
 # Sidebar: Trade Form
-# Sidebar: Trade Form
-
 with st.sidebar:
     st.header("⚡ 執行面板")
 
-    # 獲取計算用的總權益 (為了計算倉位 %)
     active_pos_temp, realized_pnl_total_hkd_sb, _, _, _, _, _, _, _, _, _, _ = calculate_portfolio(df)
     current_equity_sb = INITIAL_CAPITAL + realized_pnl_total_hkd_sb
     if current_equity_sb <= 0: current_equity_sb = 1 
 
-    # --- 初始化 Session State (為了互動計算) ---
     if 'sb_qty' not in st.session_state: st.session_state.sb_qty = 0.0
     if 'sb_price' not in st.session_state: st.session_state.sb_price = 0.0
     if 'sb_sl' not in st.session_state: st.session_state.sb_sl = 0.0
     if 'sb_pos_pct' not in st.session_state: st.session_state.sb_pos_pct = 0.0
     if 'sb_risk_pct' not in st.session_state: st.session_state.sb_risk_pct = 0.0
 
-    # --- 回調函數 (Callbacks) ---
+    # --- ✅ 修改：新增貨幣換算考慮 ---
     def update_pos_pct():
-        """當 Price 或 Qty 改變，更新 Pos%"""
+        """當 Price 或 Qty 改變，更新 Pos% (考慮貨幣)"""
         try:
-            val = st.session_state.sb_price * st.session_state.sb_qty
-            st.session_state.sb_pos_pct = (val / current_equity_sb) * 100
+            symbol_val = st.session_state.sb_symbol.upper().strip()
+            value_base = st.session_state.sb_price * st.session_state.sb_qty
+            value_hkd = get_hkd_value(symbol_val, value_base)
+            st.session_state.sb_pos_pct = (value_hkd / current_equity_sb) * 100
         except: pass
 
     def update_qty():
-        """當 Pos% 改變，更新 Qty"""
+        """當 Pos% 改變，更新 Qty (考慮貨幣)"""
         try:
+            symbol_val = st.session_state.sb_symbol.upper().strip()
             if st.session_state.sb_price > 0:
-                val = current_equity_sb * (st.session_state.sb_pos_pct / 100)
-                st.session_state.sb_qty = val / st.session_state.sb_price
+                val_hkd = current_equity_sb * (st.session_state.sb_pos_pct / 100)
+                multiplier = 1.0 if ".HK" in symbol_val else USD_HKD_RATE
+                val_base = val_hkd / multiplier
+                st.session_state.sb_qty = val_base / st.session_state.sb_price
         except: pass
 
     def update_risk_pct():
-        """當 Price, Qty, 或 SL 改變，更新 Risk%"""
+        """當 Price, Qty, 或 SL 改變，更新 Risk% (考慮貨幣)"""
         try:
-            risk_amt = abs(st.session_state.sb_price - st.session_state.sb_sl) * st.session_state.sb_qty
-            st.session_state.sb_risk_pct = (risk_amt / current_equity_sb) * 100
+            symbol_val = st.session_state.sb_symbol.upper().strip()
+            risk_amt_base = abs(st.session_state.sb_price - st.session_state.sb_sl) * st.session_state.sb_qty
+            risk_amt_hkd = get_hkd_value(symbol_val, risk_amt_base)
+            st.session_state.sb_risk_pct = (risk_amt_hkd / current_equity_sb) * 100
         except: pass
 
     def update_sl():
-        """當 Risk% 改變，更新 SL"""
+        """當 Risk% 改變，更新 SL (考慮貨幣)"""
         try:
+            symbol_val = st.session_state.sb_symbol.upper().strip()
             if st.session_state.sb_qty > 0:
-                dist = (current_equity_sb * (st.session_state.sb_risk_pct / 100)) / st.session_state.sb_qty
-                # 判斷多空 (簡單用 toggle key)
-                if st.session_state.sb_is_sell: # Sell, SL 在 Price 上方
+                risk_amt_hkd = current_equity_sb * (st.session_state.sb_risk_pct / 100)
+                multiplier = 1.0 if ".HK" in symbol_val else USD_HKD_RATE
+                risk_amt_base = risk_amt_hkd / multiplier
+                dist = risk_amt_base / st.session_state.sb_qty
+                
+                if st.session_state.sb_is_sell:
                     st.session_state.sb_sl = st.session_state.sb_price + dist
-                else: # Buy, SL 在 Price 下方
+                else:
                     st.session_state.sb_sl = st.session_state.sb_price - dist
         except: pass
 
@@ -517,9 +549,7 @@ with st.sidebar:
         update_pos_pct()
         update_risk_pct()
 
-    # --- 關鍵修正: 定義儲存交易的 Callback ---
     def handle_save_transaction(active_pos_data):
-        # 1. 從 Session State 獲取值
         s_in = format_symbol(st.session_state.sb_symbol.upper().strip())
         q_in = st.session_state.sb_qty
         p_in = st.session_state.sb_price
@@ -527,20 +557,18 @@ with st.sidebar:
         is_sell = st.session_state.sb_is_sell
         act_in = "賣出 Sell" if is_sell else "買入 Buy"
         
-        # 策略處理
         st_in = st.session_state.sb_strat
         if st_in == "➕ 新增...": 
             st_in = st.session_state.get('sb_strat_new', '')
 
-        # 2. 驗證與邏輯
         if s_in and q_in is not None and p_in is not None:
             assigned_tid = "N/A"
-            if not is_sell: # Buy
+            if not is_sell:
                 if s_in in active_pos_data:
                     assigned_tid = active_pos_data[s_in]['trade_id']
                 else:
                     assigned_tid = int(time.time())
-            else: # Sell
+            else:
                 if s_in in active_pos_data:
                     assigned_tid = active_pos_data[s_in]['trade_id']
                 else:
@@ -568,7 +596,6 @@ with st.sidebar:
             
             st.session_state['save_msg'] = {"type": "success", "msg": f"已儲存 {s_in}"}
             
-            # 3. 安全重置輸入值 (在 Callback 中修改 Session State 是合法的)
             st.session_state.sb_price = 0.0
             st.session_state.sb_qty = 0.0
             st.session_state.sb_sl = 0.0
@@ -576,7 +603,6 @@ with st.sidebar:
             st.session_state.sb_risk_pct = 0.0
             st.session_state.sb_note = ""
 
-    # --- UI 輸入區 (移除 st.form 以支援互動) ---
     d_in = st.date_input("日期", value=datetime.now(), key='sb_date')
     s_in = st.text_input("代號 (Ticker)", key='sb_symbol')
     is_sell_toggle = st.toggle("Buy 🟢 / Sell 🔴", value=False, key='sb_is_sell', on_change=update_sl)
@@ -588,10 +614,8 @@ with st.sidebar:
     sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.05, key='sb_sl', on_change=update_risk_pct)
         
     st.divider()
-    # 新增：倉位 % (互動調整)
     pos_pct_in = st.number_input("該筆交易佔整體倉位的 %", min_value=0.0, max_value=100.0, step=1.0, key='sb_pos_pct', on_change=update_qty)  
 
-    # 新增：風險 % (互動調整)
     risk_pct_in = st.number_input("停損幅度佔整體倉位的 %", min_value=0.0, max_value=100.0, step=0.1, key='sb_risk_pct', on_change=update_sl)
     st.divider()
 
@@ -604,12 +628,9 @@ with st.sidebar:
     note_in = st.text_area("決策筆記", key='sb_note')
     img_file = st.file_uploader("📸 上傳圖表截圖", type=['png','jpg','jpeg'], key='sb_img')
 
-    # --- 修正後的按鈕邏輯 ---
-    # 使用 on_click 觸發 Callback
     st.button("儲存執行紀錄", type="primary", use_container_width=True, 
               on_click=handle_save_transaction, args=(active_pos_temp,))
 
-    # 顯示儲存結果訊息
     if 'save_msg' in st.session_state:
         msg = st.session_state.pop('save_msg')
         if msg['type'] == 'success':
@@ -618,20 +639,18 @@ with st.sidebar:
             st.error(msg['msg'])
 
 
-# 計算主要數據
 active_pos, realized_pnl_total_hkd, completed_trades_df, equity_df, exp_val, exp_r_val, avg_dur_val, pl_ratio_val, mdd_val, max_wins_val, max_losses_val, avg_risk_val = calculate_portfolio(df)
 
 t1, t2, t3, t4, t5 = st.tabs(["📈 績效矩陣", "🔥 持倉 & 報價", "🔄 交易重播", "🧠 心理 & 歷史", "🛠️ 數據管理"])
 
 with t1:
     
-    # --- UI 調整: 將隱私開關與時間過濾器並排 ---
     c_header, c_toggle = st.columns([5, 2])
     with c_header:
         st.subheader("📊 績效概覽")
         time_frame = st.selectbox("統計時間範圍", ["全部記錄", "本週 (This Week)", "本月 (This Month)", "最近 3個月 (Last 3M)", "今年 (YTD)"], index=0)
     with c_toggle:
-        st.write("") # Spacer
+        st.write("")
         st.write("") 
         private_mode = st.toggle("🙈 隱私模式", value=False, help="隱藏敏感金額數據，適合公開展示")
 
@@ -658,17 +677,14 @@ with t1:
     trade_count = len(filtered_comp)
     win_r = (len(filtered_comp[filtered_comp['PnL_HKD'] > 0]) / trade_count * 100) if trade_count > 0 else 0
     
-    # 計算即時持倉的潛在風險 (若全體止損)
     live_prices = get_live_prices(list(active_pos.keys()))
     potential_stop_loss_impact = 0
     for s, d in active_pos.items():
         curr_price = live_prices.get(s)
         if curr_price and d['last_sl'] > 0:
-            # 風險 = (現價 - 止損價) * 股數
             impact = (curr_price - d['last_sl']) * d['qty']
             potential_stop_loss_impact += get_hkd_value(s, impact)
     
-    # --- 隱私模式遮罩 Helper ---
     mask_val = lambda v, fmt: "****" if private_mode else fmt.format(v)
 
     m1, m2, m3, m4, m5, m6 = st.columns(6)
@@ -682,8 +698,6 @@ with t1:
     st.divider()
     
     k1, k2, k3, k4 = st.columns(4)
-    # 修正：移除 mask_val 中的負號，因為 potential_stop_loss_impact 為正數時要顯示為負
-    # 這裡我們傳入 potential_stop_loss_impact (正值)，格式字串為 "-${...}"，結果為 -$100
     k1.metric("若全體止損回撤", mask_val(potential_stop_loss_impact, "-${:,.0f}"), delta_color="inverse", help="若所有當前持倉立刻打到止損價，帳戶市值將減少的金額")
     if max_wins_val > 0:
         k2.metric("🔥 連勝狀態", f"🔥{max_wins_val} ")
@@ -696,13 +710,11 @@ with t1:
     k4.metric("目前帳戶預估", mask_val(INITIAL_CAPITAL + realized_pnl_total_hkd, "${:,.0f}"))
     
     if not equity_df.empty:
-        # 如果是隱私模式，隱藏 Y 軸數值
         fig_equity = px.area(equity_df, x="Date", y="Cumulative PnL", title="累計損益曲線")
         if private_mode:
             fig_equity.update_yaxes(showticklabels=False)
         st.plotly_chart(fig_equity, use_container_width=True)
     
-    # --- AI 交易教練洞察 ---
     st.divider()
     st.subheader("🤖 AI 交易教練洞察")
     if st.button("生成本期 AI 檢討報告"):
@@ -719,7 +731,6 @@ with t1:
             prompt = f"請根據以下交易統計給出深度專業建議：{stats}。請分析錯誤標籤，並給出三個下週改進動作。請用繁體中文，語氣要像專業交易導師。"
             st.markdown(get_ai_response(prompt))
             
-    # --- 還原交易排行榜格式 ---
     if not filtered_comp.empty:
         st.divider()
         st.subheader("🏆 週期成交排行榜")
@@ -743,25 +754,43 @@ with t2:
     if active_pos:
         live_prices = get_live_prices(list(active_pos.keys()))
         processed_p_data = []
+        
+        total_position_value_hkd = 0
+        
         for s, d in active_pos.items():
             now = live_prices.get(s)
             qty, avg_p, last_sl = d['qty'], d['avg_price'], d['last_sl']
             entry_p, entry_sl = d.get('entry_price', avg_p), d.get('entry_sl', 0)
             
             un_pnl = (now - avg_p) * qty if now else 0
+            un_pnl_hkd = get_hkd_value(s, un_pnl)
             roi = (un_pnl / (qty * avg_p) * 100) if (now and avg_p != 0) else 0
             
             init_risk = abs(entry_p - entry_sl) * qty if entry_sl > 0 else 0
+            init_risk_hkd = get_hkd_value(s, init_risk)
             curr_risk = (now - last_sl) * qty if (now and last_sl > 0) else 0
-            curr_r = (un_pnl / init_risk) if (now and init_risk > 0) else 0
+            curr_risk_hkd = get_hkd_value(s, curr_risk)
+            curr_r = (un_pnl_hkd / init_risk_hkd) if (now and init_risk_hkd > 0) else 0
+            
+            # ✅ 新增：計算佔整體帳戶的百分比
+            pos_value_hkd, pos_pct = calculate_position_percentage(
+                active_pos, s, live_prices, 
+                INITIAL_CAPITAL + realized_pnl_total_hkd
+            )
+            total_position_value_hkd += pos_value_hkd
             
             processed_p_data.append({
-                "代號": s, "持股數": f"{qty:,.0f}", "平均成本": f"{avg_p:,.2f}", 
-                "現價": f"{now:,.2f}" if now else "N/A", "當前止損": f"{last_sl:,.2f}", 
-                "初始風險": f"{init_risk:,.2f}",
-                "當前風險(Open)": f"{curr_risk:,.2f}",
+                "代號": s, 
+                "持股數": f"{qty:,.0f}", 
+                "平均成本": f"{avg_p:,.2f}", 
+                "現價": f"{now:,.2f}" if now else "N/A", 
+                "當前止損": f"{last_sl:,.2f}", 
+                "初始風險": f"{init_risk_hkd:,.2f}",
+                "當前風險(Open)": f"{curr_risk_hkd:,.2f}",
                 "當前R": f"{curr_r:.2f}R",
-                "未實現損益": f"{un_pnl:,.2f}", "報酬%": roi
+                "未實現損益(HKD)": f"{un_pnl_hkd:,.2f}", 
+                "報酬%": roi,
+                "佔整體帳戶%": f"{pos_pct:.2f}%"  # ✅ 新增欄位
             })
         
         st.dataframe(
@@ -769,11 +798,27 @@ with t2:
             column_config={
                 "報酬%": st.column_config.ProgressColumn(
                     "報酬%", format="%.2f%%", min_value=-20, max_value=20, color="green"
+                ),
+                "佔整體帳戶%": st.column_config.ProgressColumn(
+                    "佔整體帳戶%", format="%.2f%%", min_value=0, max_value=100
                 )
             }, 
             hide_index=True, use_container_width=True
         )
-        if st.button("🔄 刷新即時報價", use_container_width=True): st.cache_data.clear(); st.rerun()
+        
+        # ✅ 新增：顯示總倉位資訊摘要
+        st.divider()
+        current_account_value = INITIAL_CAPITAL + realized_pnl_total_hkd
+        total_pos_pct = (total_position_value_hkd / current_account_value) * 100 if current_account_value > 0 else 0
+        
+        col_summary1, col_summary2, col_summary3 = st.columns(3)
+        col_summary1.metric("總持倉市值 (HKD)", f"${total_position_value_hkd:,.0f}")
+        col_summary2.metric("總倉位佔比", f"{total_pos_pct:.2f}%", help="所有持倉佔帳戶的百分比")
+        col_summary3.metric("帳戶現金", f"${current_account_value - total_position_value_hkd:,.0f}")
+        
+        if st.button("🔄 刷新即時報價", use_container_width=True): 
+            st.cache_data.clear()
+            st.rerun()
     else:
         st.info("目前無持倉部位")
 
@@ -801,7 +846,6 @@ with t4:
     st.subheader("📜 心理 & 歷史分析")
     if not completed_trades_df.empty:
         
-        # 1. 錯誤影響分析 (Mistake Impact)
         st.markdown("#### 🚨 錯誤代價分析 (Cost of Mistakes)")
         mistake_impact = completed_trades_df.groupby('Mistake_Tag').agg({
             'PnL_HKD': ['sum', 'count'],
@@ -819,7 +863,6 @@ with t4:
 
         st.divider()
 
-        # 2. 策略與市場環境
         c_st1, c_st2 = st.columns(2)
         
         with c_st1:
@@ -827,7 +870,7 @@ with t4:
             strat_stats = completed_trades_df.groupby('Strategy').agg({
                 'PnL_HKD': 'sum',
                 'Trade_R': 'mean',
-                'Symbol': 'count' # use Symbol count as trade count
+                'Symbol': 'count'
             }).reset_index().rename(columns={'Symbol': '次數', 'PnL_HKD': '總損益'})
             strat_stats['總損益'] = strat_stats['總損益'].round(0)
             strat_stats['Trade_R'] = strat_stats['Trade_R'].round(2)
@@ -845,7 +888,6 @@ with t4:
 
         st.divider()
 
-        # 3. 持倉時間分析 (Duration Analysis)
         st.markdown("#### ⏳ 持倉時間與獲利關係 (Time vs PnL)")
         dur_bins = [0, 1, 5, 20, 100, 999]
         dur_labels = ['當沖 (0-1天)', '短線 (2-5天)', '波段 (6-20天)', '長波段 (20-100天)', '長線 (>100天)']
@@ -875,14 +917,14 @@ with t5:
     else:
         st.warning("🟠 目前使用本地 CSV 模式")
     
-    # --- NEW: AI 匯出功能 ---
     st.divider()
     st.markdown("#### 🤖 匯出給 AI 分析 (Export for LLM)")
     st.info("下載此檔案後，直接上傳給 ChatGPT / Claude / DeepSeek，它們會自動為您進行全方位帳戶診斷。")
     
-    # 準備匯出數據
     if not df.empty:
-        # 計算匯出用的摘要數據
+        live_prices_export = get_live_prices(list(active_pos.keys())) if active_pos else {}
+        current_equity_export = INITIAL_CAPITAL + realized_pnl_total_hkd
+        
         export_stats = {
             "pnl_str": f"${realized_pnl_total_hkd:,.2f}",
             "win_rate": f"{(len(completed_trades_df[completed_trades_df['PnL_HKD'] > 0])/len(completed_trades_df)*100):.1f}%" if not completed_trades_df.empty else "N/A",
@@ -892,7 +934,11 @@ with t5:
             "count": len(completed_trades_df)
         }
         
-        export_text = generate_llm_export_data(df, export_stats)
+        # ✅ 修改：新增參數以包含持倉詳情
+        export_text = generate_llm_export_data(
+            df, export_stats, active_pos, 
+            live_prices_export, current_equity_export
+        )
         
         st.download_button(
             label="📥 下載 AI 專用分析報告 (.txt)",
@@ -905,7 +951,6 @@ with t5:
     
     st.divider()
     
-    # 原有的匯入功能
     col_u1, col_u2 = st.columns([2, 1])
     with col_u1:
         uploaded_file = st.file_uploader("📤 批量上傳 CSV/Excel", type=["csv", "xlsx"])
@@ -942,10 +987,3 @@ with t5:
         save_all_data(pd.DataFrame(columns=df.columns))
         st.success("數據已清空")
         st.rerun()
-
-
-
-
-
-
-
