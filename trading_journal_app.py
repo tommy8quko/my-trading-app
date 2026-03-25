@@ -601,6 +601,7 @@ def handle_save_transaction(active_pos_data):
         st.session_state.sb_pos_pct = 0.0
         st.session_state.sb_risk_pct = 0.0
         st.session_state.sb_note = ""
+    
     d_in = st.date_input("日期", value=datetime.now(), key='sb_date')
     s_in = st.text_input("代號 (Ticker)", key='sb_symbol')
     is_sell_toggle = st.toggle("Buy 🟢 / Sell 🔴", value=False, key='sb_is_sell', on_change=update_sl)
