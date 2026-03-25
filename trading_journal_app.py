@@ -148,7 +148,7 @@ def generate_llm_export_data(df, stats_summary, active_pos, live_prices, current
             )
             
             active_positions_detail += f"""
-Symbol: {s}
+symbol: {s}
   Quantity: {qty:,.0f}
   Avg Entry: {avg_p:,.2f}
   Current Price: {now:,.2f}
@@ -221,17 +221,17 @@ def load_data():
         if df.empty: return df
         
         # Your existing cleaning (unchanged)
-        if 'Symbol' in df.columns: df['Symbol'] = df['Symbol'].apply(format_symbol)
+        if 'symbol' in df.columns: df['symbol'] = df['symbol'].apply(format_symbol)
         if 'Strategy' in df.columns: df['Strategy'] = df['Strategy'].apply(clean_strategy)
         for col in ["Market_Condition", "Mistake_Tag", "Img", "Trade_ID"]:
             if col not in df.columns: df[col] = "N/A" if col != "Img" else None
         
-        df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
+        df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
         df['Price'] = pd.to_numeric(df['Price'], errors='coerce')
         df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce')
         df['Stop_Loss'] = pd.to_numeric(df['Stop_Loss'], errors='coerce').fillna(0)
         if 'Timestamp' not in df.columns:
-            df['Timestamp'] = pd.to_datetime(df['Date'], errors='coerce').view('int64') // 10**9
+            df['Timestamp'] = pd.to_datetime(df['date'], errors='coerce').view('int64') // 10**9
         
         return df
         
@@ -252,7 +252,7 @@ def save_transaction(data):
     try:
         client = get_supabase()
         client.table("trades").insert(data).execute()
-        st.session_state['save_msg'] = {"type": "success", "msg": f"已儲存 {data.get('Symbol', 'trade')}"}
+        st.session_state['save_msg'] = {"type": "success", "msg": f"已儲存 {data.get('symbol', 'trade')}"}
     except Exception as e:
         st.session_state['save_msg'] = {"type": "error", "msg": f"❌ Save failed: {e}"}
 
@@ -282,11 +282,11 @@ def calculate_portfolio(df):
     equity_curve = []
     
     for _, row in df.iterrows():
-        sym = format_symbol(row['Symbol']) 
-        action = str(row['Action']) if pd.notnull(row['Action']) else ""
+        sym = format_symbol(row['symbol']) 
+        action = str(row['action']) if pd.notnull(row['action']) else ""
         if not sym or not action: continue
         qty, price, sl = float(row['Quantity']), float(row['Price']), float(row['Stop_Loss'])
-        date_str = row['Date']
+        date_str = row['date']
         
         t_id = row.get('Trade_ID')
         if pd.isna(t_id) or t_id == "N/A":
@@ -361,9 +361,9 @@ def calculate_portfolio(df):
                 
                 completed_trades.append({
                     "Trade_ID": current_trade_id,
-                    "Exit_Date": date_str, 
-                    "Entry_Date": cycle_data['start_date'], 
-                    "Symbol": sym, 
+                    "Exit_date": date_str, 
+                    "Entry_date": cycle_data['start_date'], 
+                    "symbol": sym, 
                     "PnL_Raw": pnl_raw, 
                     "PnL_HKD": get_hkd_value(sym, pnl_raw),
                     "Duration_Days": duration, 
@@ -377,7 +377,7 @@ def calculate_portfolio(df):
                 del active_trade_by_symbol[sym]
                 if sym in positions: del positions[sym]
             
-            equity_curve.append({"Date": date_str, "Cumulative PnL": running_pnl_hkd})
+            equity_curve.append({"date": date_str, "Cumulative PnL": running_pnl_hkd})
             
     comp_df = pd.DataFrame(completed_trades)
     active_output = {s: p for s, p in positions.items() if s in active_trade_by_symbol}
@@ -425,7 +425,7 @@ def calculate_portfolio(df):
             max_drawdown = drawdown.min()
         
         if not comp_df.empty:
-            comp_df_sorted = comp_df.sort_values('Exit_Date').reset_index(drop=True)
+            comp_df_sorted = comp_df.sort_values('Exit_date').reset_index(drop=True)
             pnl_series = (comp_df_sorted['PnL_HKD'] > 0).astype(int)
             
             last_group = (pnl_series != pnl_series.shift()).cumsum().iloc[-1]
@@ -574,9 +574,9 @@ with st.sidebar:
             img_path = f"chart_{int(time.time())}_{st.session_state.sb_img.name}"
 
         data = {
-            "Date": st.session_state.sb_date.strftime('%Y-%m-%d'), 
-            "Symbol": s_in, 
-            "Action": act_in, 
+            "date": st.session_state.sb_date.strftime('%Y-%m-%d'), 
+            "symbol": s_in, 
+            "action": act_in, 
             "Strategy": clean_strategy(st_in), 
             "Price": p_in, 
             "Quantity": q_in, 
@@ -658,8 +658,8 @@ with t1:
 
     filtered_comp = completed_trades_df.copy()
     if not filtered_comp.empty:
-        filtered_comp['Entry_DT'] = pd.to_datetime(filtered_comp['Entry_Date'])
-        filtered_comp['Exit_DT'] = pd.to_datetime(filtered_comp['Exit_Date'])
+        filtered_comp['Entry_DT'] = pd.to_datetime(filtered_comp['Entry_date'])
+        filtered_comp['Exit_DT'] = pd.to_datetime(filtered_comp['Exit_date'])
         today = datetime.now()
         
         if "今年" in time_frame:
@@ -712,7 +712,7 @@ with t1:
     k4.metric("目前帳戶預估", mask_val(INITIAL_CAPITAL + realized_pnl_total_hkd, "${:,.0f}"))
     
     if not equity_df.empty:
-        fig_equity = px.area(equity_df, x="Date", y="Cumulative PnL", title="累計損益曲線")
+        fig_equity = px.area(equity_df, x="date", y="Cumulative PnL", title="累計損益曲線")
         if private_mode:
             fig_equity.update_yaxes(showticklabels=False)
         st.plotly_chart(fig_equity, use_container_width=True)
@@ -737,10 +737,10 @@ with t1:
         st.divider()
         st.subheader("🏆 週期成交排行榜")
         display_trades = filtered_comp.copy()
-        display_trades['原始損益'] = display_trades.apply(lambda x: mask_val(x['PnL_Raw'], "{} {:,.2f}".format(get_currency_symbol(x['Symbol']), x['PnL_Raw'])) if not private_mode else "****", axis=1)
+        display_trades['原始損益'] = display_trades.apply(lambda x: mask_val(x['PnL_Raw'], "{} {:,.2f}".format(get_currency_symbol(x['symbol']), x['PnL_Raw'])) if not private_mode else "****", axis=1)
         display_trades['HKD 損益'] = display_trades['PnL_HKD'].apply(lambda x: mask_val(x, "${:,.2f}"))
         display_trades['R 乘數'] = display_trades['Trade_R'].apply(lambda x: f"{x:.2f}R" if pd.notnull(x) else "N/A")
-        display_trades = display_trades.rename(columns={"Exit_Date": "出場日期", "Symbol": "代號"})
+        display_trades = display_trades.rename(columns={"Exit_date": "出場日期", "symbol": "代號"})
         
         r1, r2 = st.columns(2)
         with r1:
@@ -827,19 +827,19 @@ with t2:
 with t3:
     st.subheader("⏪ 交易重播")
     if not df.empty:
-        target = st.selectbox("選擇交易", df.index, format_func=lambda x: f"[{df.iloc[x]['Date']}] {df.iloc[x]['Symbol']}")
+        target = st.selectbox("選擇交易", df.index, format_func=lambda x: f"[{df.iloc[x]['date']}] {df.iloc[x]['symbol']}")
         row = df.iloc[target]
-        data = yf.download(row['Symbol'], start=(pd.to_datetime(row['Date']) - timedelta(days=20)).strftime('%Y-%m-%d'), progress=False)
+        data = yf.download(row['symbol'], start=(pd.to_datetime(row['date']) - timedelta(days=20)).strftime('%Y-%m-%d'), progress=False)
         if not data.empty:
             if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.get_level_values(0)
             fig = go.Figure(data=[go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='價格')])
-            fig.add_trace(go.Scatter(x=[pd.to_datetime(row['Date'])], y=[row['Price']], mode='markers+text', marker=dict(size=15, color='orange', symbol='star'), text=["執行"], textposition="top center"))
-            fig.update_layout(title=f"{row['Symbol']} K線圖回顧", xaxis_rangeslider_visible=False, height=500)
+            fig.add_trace(go.Scatter(x=[pd.to_datetime(row['date'])], y=[row['Price']], mode='markers+text', marker=dict(size=15, color='orange', symbol='star'), text=["執行"], textposition="top center"))
+            fig.update_layout(title=f"{row['symbol']} K線圖回顧", xaxis_rangeslider_visible=False, height=500)
             st.plotly_chart(fig, use_container_width=True)
         
         st.divider()
         if st.button("🤖 AI 單筆深度診斷"):
-            prompt = f"請檢討這筆交易：代號 {row['Symbol']}, 進場 {row['Price']}, 策略 {row['Strategy']}, 情緒 {row['Emotion']}, 錯誤 {row['Mistake_Tag']}。請評估其進場合理性。"
+            prompt = f"請檢討這筆交易：代號 {row['symbol']}, 進場 {row['Price']}, 策略 {row['Strategy']}, 情緒 {row['Emotion']}, 錯誤 {row['Mistake_Tag']}。請評估其進場合理性。"
             st.markdown(get_ai_response(prompt))
 
 with t4:
@@ -870,8 +870,8 @@ with t4:
             strat_stats = completed_trades_df.groupby('Strategy').agg({
                 'PnL_HKD': 'sum',
                 'Trade_R': 'mean',
-                'Symbol': 'count'
-            }).reset_index().rename(columns={'Symbol': '次數', 'PnL_HKD': '總損益'})
+                'symbol': 'count'
+            }).reset_index().rename(columns={'symbol': '次數', 'PnL_HKD': '總損益'})
             strat_stats['總損益'] = strat_stats['總損益'].round(0)
             strat_stats['Trade_R'] = strat_stats['Trade_R'].round(2)
             st.dataframe(strat_stats.sort_values('Trade_R', ascending=False), hide_index=True, use_container_width=True)
@@ -905,7 +905,7 @@ with t4:
     if not df.empty:
         st.divider()
         hist_df = df.sort_values("Timestamp", ascending=False).copy()
-        cols = ["Date", "Symbol", "Action", "Trade_ID", "Price", "Quantity", "Stop_Loss", "Emotion", "Mistake_Tag", "截圖"]
+        cols = ["date", "symbol", "action", "Trade_ID", "Price", "Quantity", "Stop_Loss", "Emotion", "Mistake_Tag", "截圖"]
         st.dataframe(hist_df[cols], use_container_width=True, hide_index=True)
 
 with t5:
@@ -952,7 +952,7 @@ with t5:
         if uploaded_file and st.button("🚀 開始匯入"):
             try:
                 new_data = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
-                if 'Symbol' in new_data.columns: new_data['Symbol'] = new_data['Symbol'].apply(format_symbol)
+                if 'symbol' in new_data.columns: new_data['symbol'] = new_data['symbol'].apply(format_symbol)
                 if 'Timestamp' not in new_data.columns: new_data['Timestamp'] = int(time.time())
                 df = pd.concat([df, new_data], ignore_index=True); save_all_data(df)
                 st.success("匯入成功！"); st.rerun()
@@ -960,7 +960,7 @@ with t5:
     
     if not df.empty:
         st.divider()
-        selected_idx = st.selectbox("選擇紀錄進行編輯", df.index, format_func=lambda x: f"[{df.loc[x, 'Date']}] {df.loc[x, 'Symbol']} ({df.loc[x, 'Action']})")
+        selected_idx = st.selectbox("選擇紀錄進行編輯", df.index, format_func=lambda x: f"[{df.loc[x, 'date']}] {df.loc[x, 'symbol']} ({df.loc[x, 'action']})")
         t_edit = df.loc[selected_idx]
         e1, e2, e3 = st.columns(3)
         n_p = e1.number_input("編輯價格", value=float(t_edit['Price']), key=f"ep_{selected_idx}")
