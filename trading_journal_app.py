@@ -905,9 +905,31 @@ with t4:
 
     if not df.empty:
         st.divider()
-        hist_df = df.sort_values("Timestamp", ascending=False).copy()
-        cols = ["date", "symbol", "action", "Trade_ID", "price", "quantity", "stop_loss", "Emotion", "Mistake_Tag", "截圖"]
-        st.dataframe(hist_df[cols], use_container_width=True, hide_index=True)
+        hist_df = df.sort_values("timestamp", ascending=False).copy()   # ← changed to lowercase
+        
+        # Safe column list - only show columns that actually exist
+        desired_cols = ["date", "symbol", "action", "trade_id", "price", 
+                       "quantity", "stop_loss", "emotion", "mistake_tag", "img"]
+        
+        # Use only columns that exist in the DataFrame
+        available_cols = [col for col in desired_cols if col in hist_df.columns]
+        
+        # Rename for nicer display (optional but recommended)
+        display_df = hist_df[available_cols].copy()
+        display_df = display_df.rename(columns={
+            "date": "日期",
+            "symbol": "代號",
+            "action": "買賣",
+            "trade_id": "Trade_ID",
+            "price": "價格",
+            "quantity": "股數",
+            "stop_loss": "停損",
+            "emotion": "情緒",
+            "mistake_tag": "錯誤標籤",
+            "img": "截圖"
+        })
+        
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
 
 with t5:
     st.subheader("🛠️ 數據管理")
