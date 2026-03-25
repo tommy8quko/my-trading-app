@@ -487,7 +487,7 @@ with st.sidebar:
     if 'sb_pos_pct' not in st.session_state: st.session_state.sb_pos_pct = 0.0
     if 'sb_risk_pct' not in st.session_state: st.session_state.sb_risk_pct = 0.0
 
-    # --- ✅ 修改：新增貨幣換算考慮 ---
+    # --- update functions (unchanged) ---
     def update_pos_pct():
         """當 Price 或 Qty 改變，更新 Pos% (考慮貨幣)"""
         try:
@@ -536,8 +536,9 @@ with st.sidebar:
     def update_all_metrics():
         update_pos_pct()
         update_risk_pct()
-        
-def handle_save_transaction(active_pos_data):
+
+    # ✅ FIXED: handle_save_transaction (正確的 Supabase 錯誤處理)
+    def handle_save_transaction(active_pos_data):
         """儲存交易 + 正確處理 Supabase 錯誤"""
         s_in = format_symbol(st.session_state.sb_symbol.upper().strip())
         q_in = st.session_state.sb_qty
@@ -591,17 +592,18 @@ def handle_save_transaction(active_pos_data):
             "Trade_ID": assigned_tid
         }
 
-        # 真正的 Supabase 呼叫（讓 save_transaction 自己決定 success/error）
+        # 真正的 Supabase 呼叫
         save_transaction(data)
 
-        # 清空表單（不管成功與否都清）
+        # 清空表單
         st.session_state.sb_price = 0.0
         st.session_state.sb_qty = 0.0
         st.session_state.sb_sl = 0.0
         st.session_state.sb_pos_pct = 0.0
         st.session_state.sb_risk_pct = 0.0
         st.session_state.sb_note = ""
-    
+
+    # --- 以下為 Sidebar UI 表單（縮排必須與上面的 def 對齊）---
     d_in = st.date_input("日期", value=datetime.now(), key='sb_date')
     s_in = st.text_input("代號 (Ticker)", key='sb_symbol')
     is_sell_toggle = st.toggle("Buy 🟢 / Sell 🔴", value=False, key='sb_is_sell', on_change=update_sl)
@@ -621,7 +623,8 @@ def handle_save_transaction(active_pos_data):
     mkt_cond = st.selectbox("市場環境", ["Trending Up", "Trending Down", "Range/Choppy", "High Volatility", "N/A"], key='sb_mkt')
     mistake_in = st.selectbox("錯誤標籤", ["None", "Fomo", "Revenge Trade", "Fat Finger", "Late Entry", "Moved Stop"], key='sb_mistake')
     st_in = st.selectbox("策略 (Strategy)", ["Pullback", "Breakout", "➕ 新增..."], key='sb_strat')
-    if st_in == "➕ 新增...": st.text_input("輸入新策略名稱", key='sb_strat_new')
+    if st_in == "➕ 新增...": 
+        st.text_input("輸入新策略名稱", key='sb_strat_new')
     
     emo_in = st.select_slider("心理狀態", options=["恐慌", "猶豫", "平靜", "自信", "衝動"], value="平靜", key='sb_emo')
     note_in = st.text_area("決策筆記", key='sb_note')
