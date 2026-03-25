@@ -536,9 +536,9 @@ with st.sidebar:
     def update_all_metrics():
         update_pos_pct()
         update_risk_pct()
-
-      def handle_save_transaction(active_pos_data):
-          """儲存交易 + 正確處理 Supabase 錯誤"""
+        
+def handle_save_transaction(active_pos_data):
+        """儲存交易 + 正確處理 Supabase 錯誤"""
         s_in = format_symbol(st.session_state.sb_symbol.upper().strip())
         q_in = st.session_state.sb_qty
         p_in = st.session_state.sb_price
@@ -601,7 +601,6 @@ with st.sidebar:
         st.session_state.sb_pos_pct = 0.0
         st.session_state.sb_risk_pct = 0.0
         st.session_state.sb_note = ""
-
     d_in = st.date_input("日期", value=datetime.now(), key='sb_date')
     s_in = st.text_input("代號 (Ticker)", key='sb_symbol')
     is_sell_toggle = st.toggle("Buy 🟢 / Sell 🔴", value=False, key='sb_is_sell', on_change=update_sl)
