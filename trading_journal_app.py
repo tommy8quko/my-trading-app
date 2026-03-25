@@ -577,19 +577,19 @@ with st.sidebar:
             "date": st.session_state.sb_date.strftime('%Y-%m-%d'), 
             "symbol": s_in, 
             "action": act_in, 
-            "Strategy": clean_strategy(st_in), 
-            "Price": p_in, 
-            "Quantity": q_in, 
-            "Stop_Loss": sl_in if sl_in is not None else 0.0, 
-            "Fees": 0, 
-            "Emotion": st.session_state.sb_emo, 
-            "Risk_Reward": 0, 
-            "Notes": st.session_state.sb_note, 
-            "Timestamp": int(time.time()), 
-            "Market_Condition": st.session_state.sb_mkt, 
-            "Mistake_Tag": st.session_state.sb_mistake,
-            "Img": img_path, 
-            "Trade_ID": assigned_tid
+            "strategy": clean_strategy(st_in), 
+            "price": p_in, 
+            "quantity": q_in, 
+            "stop_loss": sl_in if sl_in is not None else 0.0, 
+            "fees": 0, 
+            "emotion": st.session_state.sb_emo, 
+            "risk_reward": 0, 
+            "notes": st.session_state.sb_note, 
+            "timestamp": int(time.time()), 
+            "market_condition": st.session_state.sb_mkt, 
+            "mistake_tag": st.session_state.sb_mistake,
+            "img": img_path, 
+            "trade_id": assigned_tid
         }
 
         # 真正的 Supabase 呼叫
