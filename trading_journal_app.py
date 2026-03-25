@@ -188,7 +188,7 @@ Your goal is to analyze this data to find patterns in their mistakes, evaluate t
 
 === 📝 INSTRUCTIONS FOR AI ===
 Please analyze the data above and provide:
-1. A critique of the user's risk management based on 'Trade_R' and 'Stop_Loss'.
+1. A critique of the user's risk management based on 'Trade_R' and 'stop_loss'.
 2. Correlation analysis: Which 'Emotion' or 'Mistake_Tag' leads to the biggest losses?
 3. Strategy performance review: Which strategy is performing best?
 4. Analysis of current open positions: Are they properly sized? Are the stop losses at risk?
@@ -229,7 +229,7 @@ def load_data():
         df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
         df['price'] = pd.to_numeric(df['price'], errors='coerce')
         df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce')
-        df['Stop_Loss'] = pd.to_numeric(df['Stop_Loss'], errors='coerce').fillna(0)
+        df['stop_loss'] = pd.to_numeric(df['stop_loss'], errors='coerce').fillna(0)
         if 'Timestamp' not in df.columns:
             df['Timestamp'] = pd.to_datetime(df['date'], errors='coerce').view('int64') // 10**9
         
@@ -285,7 +285,7 @@ def calculate_portfolio(df):
         sym = format_symbol(row['symbol']) 
         action = str(row['action']) if pd.notnull(row['action']) else ""
         if not sym or not action: continue
-        qty, price, sl = float(row['quantity']), float(row['price']), float(row['Stop_Loss'])
+        qty, price, sl = float(row['quantity']), float(row['price']), float(row['stop_loss'])
         date_str = row['date']
         
         t_id = row.get('Trade_ID')
@@ -906,7 +906,7 @@ with t4:
     if not df.empty:
         st.divider()
         hist_df = df.sort_values("Timestamp", ascending=False).copy()
-        cols = ["date", "symbol", "action", "Trade_ID", "price", "quantity", "Stop_Loss", "Emotion", "Mistake_Tag", "截圖"]
+        cols = ["date", "symbol", "action", "Trade_ID", "price", "quantity", "stop_loss", "Emotion", "Mistake_Tag", "截圖"]
         st.dataframe(hist_df[cols], use_container_width=True, hide_index=True)
 
 with t5:
@@ -966,11 +966,11 @@ with t5:
         e1, e2, e3 = st.columns(3)
         n_p = e1.number_input("編輯價格", value=float(t_edit['price']), key=f"ep_{selected_idx}")
         n_q = e2.number_input("編輯股數", value=float(t_edit['quantity']), key=f"eq_{selected_idx}")
-        n_sl = e3.number_input("編輯止損價", value=float(t_edit['Stop_Loss']), key=f"esl_{selected_idx}")
+        n_sl = e3.number_input("編輯止損價", value=float(t_edit['stop_loss']), key=f"esl_{selected_idx}")
         
         b1, b2 = st.columns(2)
         if b1.button("💾 儲存修改", use_container_width=True):
-            df.loc[selected_idx, ['price', 'quantity', 'Stop_Loss']] = [n_p, n_q, n_sl]
+            df.loc[selected_idx, ['price', 'quantity', 'stop_loss']] = [n_p, n_q, n_sl]
             save_all_data(df); st.success("已更新"); st.rerun()
         if b2.button("🗑️ 刪除此筆紀錄", use_container_width=True):
             df = df.drop(selected_idx).reset_index(drop=True)
