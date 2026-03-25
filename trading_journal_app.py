@@ -151,7 +151,7 @@ def generate_llm_export_data(df, stats_summary, active_pos, live_prices, current
 symbol: {s}
   Quantity: {qty:,.0f}
   Avg Entry: {avg_p:,.2f}
-  Current Price: {now:,.2f}
+  Current price: {now:,.2f}
   Stop Loss: {last_sl:,.2f}
   Unrealized PnL (HKD): ${un_pnl_hkd:,.2f}
   Position Size %: {pos_pct:.2f}%
@@ -227,7 +227,7 @@ def load_data():
             if col not in df.columns: df[col] = "N/A" if col != "Img" else None
         
         df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
-        df['Price'] = pd.to_numeric(df['Price'], errors='coerce')
+        df['price'] = pd.to_numeric(df['price'], errors='coerce')
         df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce')
         df['Stop_Loss'] = pd.to_numeric(df['Stop_Loss'], errors='coerce').fillna(0)
         if 'Timestamp' not in df.columns:
@@ -285,7 +285,7 @@ def calculate_portfolio(df):
         sym = format_symbol(row['symbol']) 
         action = str(row['action']) if pd.notnull(row['action']) else ""
         if not sym or not action: continue
-        qty, price, sl = float(row['Quantity']), float(row['Price']), float(row['Stop_Loss'])
+        qty, price, sl = float(row['Quantity']), float(row['price']), float(row['Stop_Loss'])
         date_str = row['date']
         
         t_id = row.get('Trade_ID')
@@ -310,7 +310,7 @@ def calculate_portfolio(df):
                     'cash_flow_raw': 0.0, 
                     'start_date': date_str, 
                     'initial_risk_raw': 0.0,
-                    'Entry_Price': price,
+                    'Entry_price': price,
                     'Entry_SL': sl,
                     'qty_accumulated': 0.0,
                     'Strategy': row.get('Strategy', ''),
@@ -384,7 +384,7 @@ def calculate_portfolio(df):
     
     for s, p in active_output.items():
         tid = active_trade_by_symbol[s]
-        p['entry_price'] = cycle_tracker[tid]['Entry_Price']
+        p['entry_price'] = cycle_tracker[tid]['Entry_price']
         p['entry_sl'] = cycle_tracker[tid]['Entry_SL']
     
     exp_hkd, exp_r, avg_dur, profit_loss_ratio, max_drawdown = 0, 0, 0, 0, 0
@@ -489,7 +489,7 @@ with st.sidebar:
 
     # --- update functions (unchanged) ---
     def update_pos_pct():
-        """當 Price 或 Qty 改變，更新 Pos% (考慮貨幣)"""
+        """當 price 或 Qty 改變，更新 Pos% (考慮貨幣)"""
         try:
             symbol_val = st.session_state.sb_symbol.upper().strip()
             value_base = st.session_state.sb_price * st.session_state.sb_qty
@@ -509,7 +509,7 @@ with st.sidebar:
         except: pass
 
     def update_risk_pct():
-        """當 Price, Qty, 或 SL 改變，更新 Risk% (考慮貨幣)"""
+        """當 price, Qty, 或 SL 改變，更新 Risk% (考慮貨幣)"""
         try:
             symbol_val = st.session_state.sb_symbol.upper().strip()
             risk_amt_base = abs(st.session_state.sb_price - st.session_state.sb_sl) * st.session_state.sb_qty
@@ -611,7 +611,7 @@ with st.sidebar:
 
     col1, col2 = st.columns(2)
     q_in = col1.number_input("股數 (Qty)", min_value=0.0, step=100.0, key='sb_qty', on_change=update_all_metrics)
-    p_in = col2.number_input("成交價格 (Price)", min_value=0.0, step=0.05, key='sb_price', on_change=update_all_metrics)
+    p_in = col2.number_input("成交價格 (price)", min_value=0.0, step=0.05, key='sb_price', on_change=update_all_metrics)
 
     sl_in = st.number_input("停損價格 (Stop Loss)", min_value=0.0, step=0.05, key='sb_sl', on_change=update_risk_pct)
         
@@ -834,13 +834,13 @@ with t3:
         if not data.empty:
             if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.get_level_values(0)
             fig = go.Figure(data=[go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='價格')])
-            fig.add_trace(go.Scatter(x=[pd.to_datetime(row['date'])], y=[row['Price']], mode='markers+text', marker=dict(size=15, color='orange', symbol='star'), text=["執行"], textposition="top center"))
+            fig.add_trace(go.Scatter(x=[pd.to_datetime(row['date'])], y=[row['price']], mode='markers+text', marker=dict(size=15, color='orange', symbol='star'), text=["執行"], textposition="top center"))
             fig.update_layout(title=f"{row['symbol']} K線圖回顧", xaxis_rangeslider_visible=False, height=500)
             st.plotly_chart(fig, use_container_width=True)
         
         st.divider()
         if st.button("🤖 AI 單筆深度診斷"):
-            prompt = f"請檢討這筆交易：代號 {row['symbol']}, 進場 {row['Price']}, 策略 {row['Strategy']}, 情緒 {row['Emotion']}, 錯誤 {row['Mistake_Tag']}。請評估其進場合理性。"
+            prompt = f"請檢討這筆交易：代號 {row['symbol']}, 進場 {row['price']}, 策略 {row['Strategy']}, 情緒 {row['Emotion']}, 錯誤 {row['Mistake_Tag']}。請評估其進場合理性。"
             st.markdown(get_ai_response(prompt))
 
 with t4:
@@ -906,7 +906,7 @@ with t4:
     if not df.empty:
         st.divider()
         hist_df = df.sort_values("Timestamp", ascending=False).copy()
-        cols = ["date", "symbol", "action", "Trade_ID", "Price", "Quantity", "Stop_Loss", "Emotion", "Mistake_Tag", "截圖"]
+        cols = ["date", "symbol", "action", "Trade_ID", "price", "Quantity", "Stop_Loss", "Emotion", "Mistake_Tag", "截圖"]
         st.dataframe(hist_df[cols], use_container_width=True, hide_index=True)
 
 with t5:
@@ -964,13 +964,13 @@ with t5:
         selected_idx = st.selectbox("選擇紀錄進行編輯", df.index, format_func=lambda x: f"[{df.loc[x, 'date']}] {df.loc[x, 'symbol']} ({df.loc[x, 'action']})")
         t_edit = df.loc[selected_idx]
         e1, e2, e3 = st.columns(3)
-        n_p = e1.number_input("編輯價格", value=float(t_edit['Price']), key=f"ep_{selected_idx}")
+        n_p = e1.number_input("編輯價格", value=float(t_edit['price']), key=f"ep_{selected_idx}")
         n_q = e2.number_input("編輯股數", value=float(t_edit['Quantity']), key=f"eq_{selected_idx}")
         n_sl = e3.number_input("編輯止損價", value=float(t_edit['Stop_Loss']), key=f"esl_{selected_idx}")
         
         b1, b2 = st.columns(2)
         if b1.button("💾 儲存修改", use_container_width=True):
-            df.loc[selected_idx, ['Price', 'Quantity', 'Stop_Loss']] = [n_p, n_q, n_sl]
+            df.loc[selected_idx, ['price', 'Quantity', 'Stop_Loss']] = [n_p, n_q, n_sl]
             save_all_data(df); st.success("已更新"); st.rerun()
         if b2.button("🗑️ 刪除此筆紀錄", use_container_width=True):
             df = df.drop(selected_idx).reset_index(drop=True)
