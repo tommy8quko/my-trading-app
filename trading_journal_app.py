@@ -537,70 +537,70 @@ with st.sidebar:
         update_pos_pct()
         update_risk_pct()
 
-   def handle_save_transaction(active_pos_data):
-    """儲存交易 + 正確處理 Supabase 錯誤"""
-    s_in = format_symbol(st.session_state.sb_symbol.upper().strip())
-    q_in = st.session_state.sb_qty
-    p_in = st.session_state.sb_price
-    sl_in = st.session_state.sb_sl
-    is_sell = st.session_state.sb_is_sell
-    act_in = "賣出 Sell" if is_sell else "買入 Buy"
-    
-    st_in = st.session_state.sb_strat
-    if st_in == "➕ 新增...": 
-        st_in = st.session_state.get('sb_strat_new', '')
+      def handle_save_transaction(active_pos_data):
+        """儲存交易 + 正確處理 Supabase 錯誤"""
+        s_in = format_symbol(st.session_state.sb_symbol.upper().strip())
+        q_in = st.session_state.sb_qty
+        p_in = st.session_state.sb_price
+        sl_in = st.session_state.sb_sl
+        is_sell = st.session_state.sb_is_sell
+        act_in = "賣出 Sell" if is_sell else "買入 Buy"
+        
+        st_in = st.session_state.sb_strat
+        if st_in == "➕ 新增...": 
+            st_in = st.session_state.get('sb_strat_new', '')
 
-    if not (s_in and q_in is not None and p_in is not None):
-        st.session_state['save_msg'] = {"type": "error", "msg": "缺少必要欄位"}
-        return
-
-    # 決定 Trade_ID
-    assigned_tid = "N/A"
-    if not is_sell:
-        if s_in in active_pos_data:
-            assigned_tid = active_pos_data[s_in]['trade_id']
-        else:
-            assigned_tid = int(time.time())
-    else:
-        if s_in in active_pos_data:
-            assigned_tid = active_pos_data[s_in]['trade_id']
-        else:
-            st.session_state['save_msg'] = {"type": "error", "msg": "找不到該標的的開倉紀錄，無法匹配 Trade_ID"}
+        if not (s_in and q_in is not None and p_in is not None):
+            st.session_state['save_msg'] = {"type": "error", "msg": "缺少必要欄位"}
             return
 
-    img_path = None
-    if st.session_state.sb_img is not None:
-        img_path = f"chart_{int(time.time())}_{st.session_state.sb_img.name}"
+        # 決定 Trade_ID
+        assigned_tid = "N/A"
+        if not is_sell:
+            if s_in in active_pos_data:
+                assigned_tid = active_pos_data[s_in]['trade_id']
+            else:
+                assigned_tid = int(time.time())
+        else:
+            if s_in in active_pos_data:
+                assigned_tid = active_pos_data[s_in]['trade_id']
+            else:
+                st.session_state['save_msg'] = {"type": "error", "msg": "找不到該標的的開倉紀錄，無法匹配 Trade_ID"}
+                return
 
-    data = {
-        "Date": st.session_state.sb_date.strftime('%Y-%m-%d'), 
-        "Symbol": s_in, 
-        "Action": act_in, 
-        "Strategy": clean_strategy(st_in), 
-        "Price": p_in, 
-        "Quantity": q_in, 
-        "Stop_Loss": sl_in if sl_in is not None else 0.0, 
-        "Fees": 0, 
-        "Emotion": st.session_state.sb_emo, 
-        "Risk_Reward": 0, 
-        "Notes": st.session_state.sb_note, 
-        "Timestamp": int(time.time()), 
-        "Market_Condition": st.session_state.sb_mkt, 
-        "Mistake_Tag": st.session_state.sb_mistake,
-        "Img": img_path, 
-        "Trade_ID": assigned_tid
-    }
+        img_path = None
+        if st.session_state.sb_img is not None:
+            img_path = f"chart_{int(time.time())}_{st.session_state.sb_img.name}"
 
-    # 真正的 Supabase 呼叫（不要在這裡強制 success）
-    save_transaction(data)   # ← 讓 save_transaction 自己決定 success/error
+        data = {
+            "Date": st.session_state.sb_date.strftime('%Y-%m-%d'), 
+            "Symbol": s_in, 
+            "Action": act_in, 
+            "Strategy": clean_strategy(st_in), 
+            "Price": p_in, 
+            "Quantity": q_in, 
+            "Stop_Loss": sl_in if sl_in is not None else 0.0, 
+            "Fees": 0, 
+            "Emotion": st.session_state.sb_emo, 
+            "Risk_Reward": 0, 
+            "Notes": st.session_state.sb_note, 
+            "Timestamp": int(time.time()), 
+            "Market_Condition": st.session_state.sb_mkt, 
+            "Mistake_Tag": st.session_state.sb_mistake,
+            "Img": img_path, 
+            "Trade_ID": assigned_tid
+        }
 
-    # 清空表單（不管成功與否都清）
-    st.session_state.sb_price = 0.0
-    st.session_state.sb_qty = 0.0
-    st.session_state.sb_sl = 0.0
-    st.session_state.sb_pos_pct = 0.0
-    st.session_state.sb_risk_pct = 0.0
-    st.session_state.sb_note = ""
+        # 真正的 Supabase 呼叫（讓 save_transaction 自己決定 success/error）
+        save_transaction(data)
+
+        # 清空表單（不管成功與否都清）
+        st.session_state.sb_price = 0.0
+        st.session_state.sb_qty = 0.0
+        st.session_state.sb_sl = 0.0
+        st.session_state.sb_pos_pct = 0.0
+        st.session_state.sb_risk_pct = 0.0
+        st.session_state.sb_note = ""
 
     d_in = st.date_input("日期", value=datetime.now(), key='sb_date')
     s_in = st.text_input("代號 (Ticker)", key='sb_symbol')
