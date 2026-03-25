@@ -538,7 +538,7 @@ with st.sidebar:
         update_risk_pct()
 
       def handle_save_transaction(active_pos_data):
-        """儲存交易 + 正確處理 Supabase 錯誤"""
+          """儲存交易 + 正確處理 Supabase 錯誤"""
         s_in = format_symbol(st.session_state.sb_symbol.upper().strip())
         q_in = st.session_state.sb_qty
         p_in = st.session_state.sb_price
