@@ -585,11 +585,12 @@ with st.sidebar:
             "emotion": st.session_state.sb_emo, 
             "risk_reward": 0, 
             "notes": st.session_state.sb_note, 
-            "timestamp": int(time.time()), 
             "market_condition": st.session_state.sb_mkt, 
             "mistake_tag": st.session_state.sb_mistake,
             "img": img_path, 
-            "trade_id": assigned_tid
+            "trade_id": assigned_tid,
+            # Remove the manual timestamp line completely
+            # PostgreSQL will use DEFAULT now()
         }
 
         # 真正的 Supabase 呼叫
