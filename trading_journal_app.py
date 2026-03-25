@@ -233,15 +233,6 @@ def load_data():
         if 'Timestamp' not in df.columns:
             df['Timestamp'] = pd.to_datetime(df['date'], errors='coerce').view('int64') // 10**9
 
-        # Normalize column names to lowercase
-        df.columns = [col.lower() if isinstance(col, str) else col for col in df.columns]
-        
-        # Ensure timestamp exists
-        if 'timestamp' not in df.columns:
-            if 'date' in df.columns:
-                df['timestamp'] = pd.to_datetime(df['date'], errors='coerce').view('int64') // 10**9
-            else:
-                df['timestamp'] = int(time.time())
         
         return df
         
