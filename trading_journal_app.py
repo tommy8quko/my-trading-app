@@ -642,7 +642,7 @@ def close_position_at_stop_loss(symbol, active_pos_data):
     st.rerun()
         # 決定 Trade_ID
     assigned_tid = "N/A"
-        if not is_sell:
+       if not is_sell:
             if s_in in active_pos_data:
                 assigned_tid = active_pos_data[s_in]['trade_id']
             else:
