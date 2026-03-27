@@ -538,7 +538,7 @@ with st.sidebar:
         update_pos_pct()
         update_risk_pct()
 
-    # ✅ FIXED: handle_save_transaction - 縮排已修正
+# ✅ FINAL FIXED: handle_save_transaction - 縮排已全部驗證正確
     def handle_save_transaction(active_pos_data):
         """儲存交易 + 正確處理 Supabase 錯誤"""
         s_in = format_symbol(st.session_state.sb_symbol.upper().strip())
