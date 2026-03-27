@@ -538,7 +538,7 @@ with st.sidebar:
         update_pos_pct()
         update_risk_pct()
 
-    # ✅ FIXED: handle_save_transaction (正確的 Supabase 錯誤處理)
+    # ✅ FIXED: handle_save_transaction (正確的 Supabase 錯誤處理 + 縮排修正)
     def handle_save_transaction(active_pos_data):
         """儲存交易 + 正確處理 Supabase 錯誤"""
         s_in = format_symbol(st.session_state.sb_symbol.upper().strip())
@@ -555,6 +555,58 @@ with st.sidebar:
         if not (s_in and q_in is not None and p_in is not None):
             st.session_state['save_msg'] = {"type": "error", "msg": "缺少必要欄位"}
             return
+
+        # 決定 Trade_ID
+        assigned_tid = "N/A"
+        if not is_sell:  # Buy
+            if s_in in active_pos_data:
+                assigned_tid = active_pos_data[s_in]['trade_id']
+            else:
+                assigned_tid = int(time.time())
+        else:  # Sell
+            if s_in in active_pos_data:
+                assigned_tid = active_pos_data[s_in]['trade_id']
+            else:
+                st.session_state['save_msg'] = {"type": "error", "msg": "找不到該標的的開倉紀錄，無法匹配 Trade_ID"}
+                return
+
+        img_path = None
+        if st.session_state.sb_img is not None:
+            img_path = f"chart_{int(time.time())}_{st.session_state.sb_img.name}"
+
+        data = {
+            "date": st.session_state.sb_date.strftime('%Y-%m-%d'), 
+            "symbol": s_in, 
+            "action": act_in, 
+            "strategy": clean_strategy(st_in), 
+            "price": p_in, 
+            "quantity": q_in, 
+            "stop_loss": sl_in if sl_in is not None else 0.0, 
+            "fees": 0, 
+            "emotion": st.session_state.sb_emo, 
+            "risk_reward": 0, 
+            "notes": st.session_state.sb_note, 
+            "market_condition": st.session_state.sb_mkt, 
+            "mistake_tag": st.session_state.sb_mistake,
+            "img": img_path, 
+            "trade_id": assigned_tid,
+            # PostgreSQL will use DEFAULT now() for timestamp
+        }
+
+        # 真正的 Supabase 呼叫
+        save_transaction(data)
+
+        # 清空表單
+        st.session_state.sb_price = 0.0
+        st.session_state.sb_qty = 0.0
+        st.session_state.sb_sl = 0.0
+        st.session_state.sb_pos_pct = 0.0
+        st.session_state.sb_risk_pct = 0.0
+        st.session_state.sb_note = ""
+
+        # Optional: clear image uploader
+        if 'sb_img' in st.session_state:
+            st.session_state.sb_img = None
 
 
 def close_position_at_stop_loss(symbol, active_pos_data):
