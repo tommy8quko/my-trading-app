@@ -622,7 +622,6 @@ def close_position_at_stop_loss(symbol, active_pos_data):
         st.error(f"{symbol} 沒有設定止損價，無法執行止損平倉")
         return
     
-    # Prepare sell transaction data
     data = {
         "date": datetime.now().strftime('%Y-%m-%d'),
         "symbol": symbol,
@@ -644,19 +643,11 @@ def close_position_at_stop_loss(symbol, active_pos_data):
     save_transaction(data)
     st.success(f"✅ 已執行止損平倉：{symbol} @ {sl_price:,.2f} (全數賣出)")
     st.rerun()
-        # 決定 Trade_ID
-    assigned_tid = "N/A"
-if not is_sell:
-    if s_in in active_pos_data:
-        assigned_tid = active_pos_data[s_in]['trade_id']
-    else:
-        assigned_tid = int(time.time())
-else:
-    if s_in in active_pos_data:
-        assigned_tid = active_pos_data[s_in]['trade_id']
-    else:
-        st.session_state['save_msg'] = {"type": "error", "msg": "找不到該標的的開倉紀錄，無法匹配 Trade_ID"}
-        return
+    # ✅ STOP HERE — delete everything below that was previously here
+
+
+def handle_save_transaction(active_pos_data):
+    # ... your already-fixed function follows here
         
         img_path = None
         if st.session_state.sb_img is not None:
