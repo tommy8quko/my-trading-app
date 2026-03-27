@@ -641,7 +641,7 @@ def close_position_at_stop_loss(symbol, active_pos_data):
     st.success(f"✅ 已執行止損平倉：{symbol} @ {sl_price:,.2f} (全數賣出)")
     st.rerun()
         # 決定 Trade_ID
-        assigned_tid = "N/A"
+    assigned_tid = "N/A"
         if not is_sell:
             if s_in in active_pos_data:
                 assigned_tid = active_pos_data[s_in]['trade_id']
