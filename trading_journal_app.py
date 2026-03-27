@@ -537,7 +537,8 @@ with st.sidebar:
     def update_all_metrics():
         update_pos_pct()
         update_risk_pct()
-    # ✅ FINAL FIXED: handle_save_transaction - 縮排完全正確 (4 spaces)
+
+# ✅ FINAL FIXED & VERIFIED: handle_save_transaction
     def handle_save_transaction(active_pos_data):
         """儲存交易 + 正確處理 Supabase 錯誤"""
         s_in = format_symbol(st.session_state.sb_symbol.upper().strip())
@@ -603,6 +604,8 @@ with st.sidebar:
         st.session_state.sb_note = ""
         if 'sb_img' in st.session_state:
             st.session_state.sb_img = None
+
+
 def close_position_at_stop_loss(symbol, active_pos_data):
     """Close the entire position at the current Stop Loss price"""
     if symbol not in active_pos_data:
