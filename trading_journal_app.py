@@ -538,7 +538,7 @@ with st.sidebar:
         update_pos_pct()
         update_risk_pct()
 
-    # ✅ FIXED: handle_save_transaction (正確的 Supabase 錯誤處理 + 縮排修正)
+    # ✅ FIXED: handle_save_transaction - 縮排已修正
     def handle_save_transaction(active_pos_data):
         """儲存交易 + 正確處理 Supabase 錯誤"""
         s_in = format_symbol(st.session_state.sb_symbol.upper().strip())
@@ -590,7 +590,6 @@ with st.sidebar:
             "mistake_tag": st.session_state.sb_mistake,
             "img": img_path, 
             "trade_id": assigned_tid,
-            # PostgreSQL will use DEFAULT now() for timestamp
         }
 
         # 真正的 Supabase 呼叫
@@ -603,11 +602,8 @@ with st.sidebar:
         st.session_state.sb_pos_pct = 0.0
         st.session_state.sb_risk_pct = 0.0
         st.session_state.sb_note = ""
-
-        # Optional: clear image uploader
         if 'sb_img' in st.session_state:
             st.session_state.sb_img = None
-
 
 def close_position_at_stop_loss(symbol, active_pos_data):
     """Close the entire position at the current Stop Loss price"""
