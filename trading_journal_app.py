@@ -650,9 +650,9 @@ def close_position_at_stop_loss(symbol, active_pos_data):
         else:
             if s_in in active_pos_data:
                 assigned_tid = active_pos_data[s_in]['trade_id']
-            else:
-                st.session_state['save_msg'] = {"type": "error", "msg": "找不到該標的的開倉紀錄，無法匹配 Trade_ID"}
-                return
+        else:
+            st.session_state['save_msg'] = {"type": "error", "msg": "找不到該標的的開倉紀錄，無法匹配 Trade_ID"}
+            return
 
         img_path = None
         if st.session_state.sb_img is not None:
