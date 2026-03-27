@@ -646,45 +646,99 @@ def close_position_at_stop_loss(symbol, active_pos_data):
     # ✅ STOP HERE — delete everything below that was previously here
 
 
+# ====================== 修正後的 Sidebar UI 部分 ======================
+
+# 先定義 handle_save_transaction 函數（只保留一次，乾淨版本）
 def handle_save_transaction(active_pos_data):
-    # ... your already-fixed function follows here
-        
-        img_path = None
-        if st.session_state.sb_img is not None:
-            img_path = f"chart_{int(time.time())}_{st.session_state.sb_img.name}"
+    """儲存交易紀錄"""
+    s_in = format_symbol(st.session_state.sb_symbol.upper().strip())
+    q_in = st.session_state.sb_qty
+    p_in = st.session_state.sb_price
+    sl_in = st.session_state.sb_sl
+    is_sell = st.session_state.sb_is_sell
+    act_in = "賣出 Sell" if is_sell else "買入 Buy"
 
-        data = {
-            "date": st.session_state.sb_date.strftime('%Y-%m-%d'), 
-            "symbol": s_in, 
-            "action": act_in, 
-            "strategy": clean_strategy(st_in), 
-            "price": p_in, 
-            "quantity": q_in, 
-            "stop_loss": sl_in if sl_in is not None else 0.0, 
-            "fees": 0, 
-            "emotion": st.session_state.sb_emo, 
-            "risk_reward": 0, 
-            "notes": st.session_state.sb_note, 
-            "market_condition": st.session_state.sb_mkt, 
-            "mistake_tag": st.session_state.sb_mistake,
-            "img": img_path, 
-            "trade_id": assigned_tid,
-            # Remove the manual timestamp line completely
-            # PostgreSQL will use DEFAULT now()
-        }
+    st_in = st.session_state.sb_strat
+    if st_in == "➕ 新增...":
+        st_in = st.session_state.get('sb_strat_new', '')
 
-        # 真正的 Supabase 呼叫
-        save_transaction(data)
+    if not (s_in and q_in is not None and p_in is not None):
+        st.session_state['save_msg'] = {"type": "error", "msg": "缺少必要欄位"}
+        return
 
-        # 清空表單
-        st.session_state.sb_price = 0.0
-        st.session_state.sb_qty = 0.0
-        st.session_state.sb_sl = 0.0
-        st.session_state.sb_pos_pct = 0.0
-        st.session_state.sb_risk_pct = 0.0
-        st.session_state.sb_note = ""
+    # 決定 Trade_ID
+    assigned_tid = "N/A"
+    if not is_sell:  # Buy
+        if s_in in active_pos_data:
+            assigned_tid = active_pos_data[s_in]['trade_id']
+        else:
+            assigned_tid = int(time.time())
+    else:  # Sell
+        if s_in in active_pos_data:
+            assigned_tid = active_pos_data[s_in]['trade_id']
+        else:
+            st.session_state['save_msg'] = {
+                "type": "error",
+                "msg": "找不到該標的的開倉紀錄，無法匹配 Trade_ID"
+            }
+            return
 
-    # --- 以下為 Sidebar UI 表單（縮排必須與上面的 def 對齊）---
+    img_path = None
+    if st.session_state.get('sb_img') is not None:
+        img_path = f"chart_{int(time.time())}_{st.session_state.sb_img.name}"
+
+    data = {
+        "date": st.session_state.sb_date.strftime('%Y-%m-%d'),
+        "symbol": s_in,
+        "action": act_in,
+        "strategy": clean_strategy(st_in),
+        "price": p_in,
+        "quantity": q_in,
+        "stop_loss": sl_in if sl_in is not None else 0.0,
+        "fees": 0,
+        "emotion": st.session_state.sb_emo,
+        "risk_reward": 0,
+        "notes": st.session_state.sb_note,
+        "market_condition": st.session_state.sb_mkt,
+        "mistake_tag": st.session_state.sb_mistake,
+        "img": img_path,
+        "trade_id": assigned_tid,
+    }
+
+    save_transaction(data)
+
+    # 清空表單
+    st.session_state.sb_price = 0.0
+    st.session_state.sb_qty = 0.0
+    st.session_state.sb_sl = 0.0
+    st.session_state.sb_pos_pct = 0.0
+    st.session_state.sb_risk_pct = 0.0
+    st.session_state.sb_note = ""
+    if 'sb_img' in st.session_state:
+        st.session_state.sb_img = None
+
+    st.rerun()
+
+
+# ====================== Sidebar UI 表單 ======================
+with st.sidebar:
+    st.header("⚡ 執行面板")
+
+    active_pos_temp, realized_pnl_total_hkd_sb, _, _, _, _, _, _, _, _, _, _ = calculate_portfolio(df)
+    current_equity_sb = INITIAL_CAPITAL + realized_pnl_total_hkd_sb
+    if current_equity_sb <= 0: 
+        current_equity_sb = 1 
+
+    # 初始化 session state
+    for key, val in {
+        'sb_qty': 0.0, 'sb_price': 0.0, 'sb_sl': 0.0, 
+        'sb_pos_pct': 0.0, 'sb_risk_pct': 0.0, 'sb_note': ""
+    }.items():
+        if key not in st.session_state:
+            st.session_state[key] = val
+
+    # ... (你的 update_pos_pct, update_qty, update_risk_pct, update_sl, update_all_metrics 函數保持不變) ...
+
     d_in = st.date_input("日期", value=datetime.now(), key='sb_date')
     s_in = st.text_input("代號 (Ticker)", key='sb_symbol')
     is_sell_toggle = st.toggle("Buy 🟢 / Sell 🔴", value=False, key='sb_is_sell', on_change=update_sl)
