@@ -556,6 +556,42 @@ with st.sidebar:
             st.session_state['save_msg'] = {"type": "error", "msg": "缺少必要欄位"}
             return
 
+
+def close_position_at_stop_loss(symbol, active_pos_data):
+    """Close the entire position at the current Stop Loss price"""
+    if symbol not in active_pos_data:
+        st.error(f"找不到持倉: {symbol}")
+        return
+    
+    pos = active_pos_data[symbol]
+    sl_price = pos.get('last_sl', 0)
+    
+    if sl_price <= 0:
+        st.error(f"{symbol} 沒有設定止損價，無法執行止損平倉")
+        return
+    
+    # Prepare sell transaction data
+    data = {
+        "date": datetime.now().strftime('%Y-%m-%d'),
+        "symbol": symbol,
+        "action": "賣出 Sell (止損)",
+        "strategy": pos.get('Strategy', 'Stop Loss'),
+        "price": sl_price,
+        "quantity": pos['qty'],
+        "stop_loss": sl_price,
+        "fees": 0,
+        "emotion": "止損執行",
+        "risk_reward": 0,
+        "notes": f"自動止損平倉 @ {sl_price}",
+        "market_condition": "N/A",
+        "mistake_tag": "Stop Loss Hit",
+        "img": None,
+        "trade_id": pos.get('trade_id', f"SL_{int(time.time())}")
+    }
+    
+    save_transaction(data)
+    st.success(f"✅ 已執行止損平倉：{symbol} @ {sl_price:,.2f} (全數賣出)")
+    st.rerun()
         # 決定 Trade_ID
         assigned_tid = "N/A"
         if not is_sell:
@@ -776,7 +812,7 @@ with t2:
             curr_risk_hkd = get_hkd_value(s, curr_risk)
             curr_r = (un_pnl_hkd / init_risk_hkd) if (now and init_risk_hkd > 0) else 0
             
-            # ✅ 新增：計算佔整體帳戶的百分比
+            # Calculate position percentage
             pos_value_hkd, pos_pct = calculate_position_percentage(
                 active_pos, s, live_prices, 
                 INITIAL_CAPITAL + realized_pnl_total_hkd
@@ -794,11 +830,16 @@ with t2:
                 "當前R": f"{curr_r:.2f}R",
                 "未實現損益(HKD)": f"{un_pnl_hkd:,.2f}", 
                 "報酬%": roi,
-                "佔整體帳戶%": f"{pos_pct:.2f}%"  # ✅ 新增欄位
+                "佔整體帳戶%": f"{pos_pct:.2f}%",
+                "操作": s   # We will use this for the button later
             })
         
+        # Create DataFrame
+        pos_df = pd.DataFrame(processed_p_data)
+        
+        # Display with custom column config
         st.dataframe(
-            pd.DataFrame(processed_p_data), 
+            pos_df.drop(columns=["操作"]),  # Hide the helper column
             column_config={
                 "報酬%": st.column_config.ProgressColumn(
                     "報酬%", format="%.2f%%", min_value=-20, max_value=20, color="green"
@@ -807,22 +848,43 @@ with t2:
                     "佔整體帳戶%", format="%.2f%%", min_value=0, max_value=100
                 )
             }, 
-            hide_index=True, use_container_width=True
+            hide_index=True, 
+            use_container_width=True
         )
         
-        # ✅ 新增：顯示總倉位資訊摘要
+        # === NEW: Add Stop Loss buttons for each position ===
+        st.divider()
+        st.markdown("### ⚠️ 快速止損平倉")
+        st.caption("點擊「❌ 止損平倉」將以當前止損價全數賣出該持倉")
+        
+        cols = st.columns(len(active_pos)) if len(active_pos) <= 4 else st.columns(4)
+        
+        for idx, (symbol, pos_data) in enumerate(active_pos.items()):
+            col = cols[idx % len(cols)]
+            with col:
+                sl_price = pos_data.get('last_sl', 0)
+                current_price = live_prices.get(symbol)
+                
+                st.markdown(f"**{symbol}**")
+                st.caption(f"止損價: {sl_price:,.2f} | 現價: {current_price:,.2f}" if current_price else f"止損價: {sl_price:,.2f}")
+                
+                if st.button(f"❌ 止損平倉", key=f"sl_btn_{symbol}", type="secondary"):
+                    close_position_at_stop_loss(symbol, active_pos)
+        
+        # Summary section remains the same
         st.divider()
         current_account_value = INITIAL_CAPITAL + realized_pnl_total_hkd
         total_pos_pct = (total_position_value_hkd / current_account_value) * 100 if current_account_value > 0 else 0
         
         col_summary1, col_summary2, col_summary3 = st.columns(3)
         col_summary1.metric("總持倉市值 (HKD)", f"${total_position_value_hkd:,.0f}")
-        col_summary2.metric("總倉位佔比", f"{total_pos_pct:.2f}%", help="所有持倉佔帳戶的百分比")
+        col_summary2.metric("總倉位佔比", f"{total_pos_pct:.2f}%")
         col_summary3.metric("帳戶現金", f"${current_account_value - total_position_value_hkd:,.0f}")
         
         if st.button("🔄 刷新即時報價", use_container_width=True): 
             st.cache_data.clear()
             st.rerun()
+            
     else:
         st.info("目前無持倉部位")
 
