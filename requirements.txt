@@ -1,9 +1,10 @@
-streamlit
-pandas
-yfinance
-plotly
-requests
-openpyxl  # 用於讀取 excel
-st-gsheets-connection
-google-generativeai
-supabase
+streamlit>=1.35
+pandas>=2.0
+plotly>=5.0
+openpyxl>=3.1
+supabase>=2.0
+anthropic>=0.40
+python-dotenv>=1.0
+beautifulsoup4>=4.12
+pdfplumber>=0.11
+pytest>=8.0

@@ -125,9 +125,9 @@ def generate_llm_export_data(df, stats_summary, active_pos, live_prices, current
             active_positions_detail += f"""
 symbol: {s}
   quantity: {qty:,.0f}
-  Avg Entry: {avg_p:,.2f}
-  Current price: {now:,.2f}
-  Stop Loss: {last_sl:,.2f}
+  Avg Entry: {f'{avg_p:,.2f}' if avg_p is not None else 'N/A'}
+  Current price: {f'{now:,.2f}' if now is not None else 'N/A'}
+  Stop Loss: {f'{last_sl:,.2f}' if last_sl is not None else 'N/A'}
   Unrealized PnL (HKD): ${un_pnl_hkd:,.2f}
   Position Size %: {pos_pct:.2f}%
 ---"""
