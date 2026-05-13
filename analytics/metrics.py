@@ -47,6 +47,16 @@ def expectancy_r(trades: list[ClosedTrade]) -> float | None:
     return (wr * avg_win_r) - (lr * avg_loss_r)
 
 
+def rr_ratio(trades: list[ClosedTrade]) -> float | None:
+    """Avg winning R / avg losing R. None if insufficient data."""
+    r_trades = [t for t in trades if t.r_multiple is not None]
+    win_r = [t.r_multiple for t in r_trades if t.r_multiple > 0]
+    loss_r = [abs(t.r_multiple) for t in r_trades if t.r_multiple <= 0]
+    if not win_r or not loss_r:
+        return None
+    return (sum(win_r) / len(win_r)) / (sum(loss_r) / len(loss_r))
+
+
 def avg_win(trades: list[ClosedTrade]) -> float:
     w = _winners(trades)
     return sum(t.realized_pnl for t in w) / len(w) if w else 0.0
@@ -209,6 +219,7 @@ def summary_dict(trades: list[ClosedTrade]) -> dict[str, Any]:
         "win_rate": win_rate(trades),
         "profit_factor": profit_factor(trades),
         "expectancy_r": expectancy_r(trades),
+        "rr_ratio": rr_ratio(trades),
         "avg_win": avg_win(trades),
         "avg_loss": avg_loss(trades),
         "total_pnl": sum(t.realized_pnl for t in trades),

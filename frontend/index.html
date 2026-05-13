@@ -340,6 +340,8 @@ function Dashboard() {
     {label:'Win Rate',      val:pct(metrics.win_rate),                     color:metrics.win_rate>=0.5?GREEN:RED},
     {label:'Max Drawdown',  val:fmt(metrics.max_drawdown,2),               color:RED},
     {label:'Profit Factor', val:fmt(metrics.profit_factor,2),              color:metrics.profit_factor>=1?GREEN:RED},
+    {label:'Expectancy',    val:metrics.expectancy_r!=null ? fmt(metrics.expectancy_r,2)+'R' : '—', color:metrics.expectancy_r>0?GREEN:RED},
+    {label:'R/R',           val:metrics.rr_ratio!=null ? fmt(metrics.rr_ratio,2)+' : 1' : '—', color:metrics.rr_ratio>=1?GREEN:RED},
     {label:'Avg Win',       val:'+'+fmt(metrics.avg_win,2),                color:GREEN},
     {label:'Avg Loss',      val:fmt(metrics.avg_loss,2),                   color:RED},
     {label:'Trades',        val:metrics.total_trades},
