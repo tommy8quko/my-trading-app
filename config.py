@@ -11,7 +11,10 @@ BROKER_CHIEF = "CHIEF"
 
 def _load_toml_secrets() -> dict:
     """Read .streamlit/secrets.toml from next to the exe or script."""
-    import tomllib
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib  # pip install tomli for Python < 3.11
 
     # Candidate locations: next to .exe, next to script, cwd
     candidates = [
