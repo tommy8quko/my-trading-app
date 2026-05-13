@@ -449,22 +449,7 @@ function Dashboard() {
                     <SortTh col="pct_return"    label="% Ret"     sort={posSort} onSort={tog} align="right"/>
                   </tr></thead>
                   <tbody>
-                    {rows.map((p,i)=>(
-                      <tr key={i}>
-                        <td style={S.ticker}>{p.symbol}</td>
-                        <td>{p.currency}</td>
-                        <td style={{color:'#5a6478',textTransform:'uppercase',fontSize:10,letterSpacing:'.06em'}}>{p.direction}</td>
-                        <td style={{textAlign:'right'}}>{fmt(p.quantity)}</td>
-                        <td style={{textAlign:'right'}}>{fmt(p.avg_entry,4)}</td>
-                        <td style={{textAlign:'right',color:RED}}>{p.stop_loss ? fmt(p.stop_loss,4) : '—'}</td>
-                        <td style={{textAlign:'right',fontWeight:700,color:p.unrealized_pnl!=null?pnlColor(p.unrealized_pnl):'#5a6478'}}>
-                          {p.unrealized_pnl!=null ? (p.unrealized_pnl>=0?'+':'')+fmt(p.unrealized_pnl,2) : '—'}
-                        </td>
-                        <td style={{textAlign:'right',color:p.pct_return!=null?pnlColor(p.pct_return):'#5a6478'}}>
-                          {p.pct_return!=null ? (p.pct_return>=0?'+':'')+p.pct_return.toFixed(2)+'%' : '—'}
-                        </td>
-                      </tr>
-                    ))}
+                    {rows.map((p,i)=><PositionRow key={i} p={p} onRefresh={()=>api('/portfolio').then(setData)}/>)}
                   </tbody>
                 </table>
               );
@@ -473,6 +458,75 @@ function Dashboard() {
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Position row with expandable lots + inline stop-loss edit ─────────────────
+function PositionRow({p, onRefresh}) {
+  const [open, setOpen] = React.useState(false);
+  const [slVals, setSlVals] = React.useState({});
+  const [saving, setSaving] = React.useState({});
+  const [errs, setErrs] = React.useState({});
+
+  const saveSL = async (lotOrderId) => {
+    setSaving(s=>({...s,[lotOrderId]:true})); setErrs(e=>({...e,[lotOrderId]:''}));
+    try {
+      const sl = parseFloat(slVals[lotOrderId]);
+      await api(`/orders/${lotOrderId}/stop_loss`, {
+        method:'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({stop_loss: sl > 0 ? sl : null}),
+      });
+      await onRefresh();
+    } catch(e) { setErrs(er=>({...er,[lotOrderId]:e.message||String(e)})); }
+    setSaving(s=>({...s,[lotOrderId]:false}));
+  };
+
+  const inputSt = {width:90,padding:'3px 6px',background:'#0a0d12',border:'1px solid rgba(255,255,255,0.12)',
+    borderRadius:4,color:'#c8d0e0',fontSize:11,fontFamily:'Space Mono',outline:'none'};
+
+  return (
+    <>
+      <tr onClick={()=>setOpen(!open)} style={{cursor:'pointer'}}>
+        <td style={S.ticker}>{p.symbol} <span style={{color:'#5a6478',fontSize:9}}>{open?'▲':'▼'}</span></td>
+        <td>{p.currency}</td>
+        <td style={{color:'#5a6478',textTransform:'uppercase',fontSize:10,letterSpacing:'.06em'}}>{p.direction}</td>
+        <td style={{textAlign:'right'}}>{fmt(p.quantity)}</td>
+        <td style={{textAlign:'right'}}>{fmt(p.avg_entry,4)}</td>
+        <td style={{textAlign:'right',color:RED}}>{p.stop_loss ? fmt(p.stop_loss,4) : '—'}</td>
+        <td style={{textAlign:'right',fontWeight:700,color:p.unrealized_pnl!=null?pnlColor(p.unrealized_pnl):'#5a6478'}}>
+          {p.unrealized_pnl!=null ? (p.unrealized_pnl>=0?'+':'')+fmt(p.unrealized_pnl,2) : '—'}
+        </td>
+        <td style={{textAlign:'right',color:p.pct_return!=null?pnlColor(p.pct_return):'#5a6478'}}>
+          {p.pct_return!=null ? (p.pct_return>=0?'+':'')+p.pct_return.toFixed(2)+'%' : '—'}
+        </td>
+      </tr>
+      {open && (p.lots||[]).map(lot=>(
+        <tr key={lot.order_id} style={{background:'rgba(255,255,255,0.02)'}}>
+          <td style={{paddingLeft:20,color:'#5a6478',fontSize:10,fontFamily:'Space Mono'}}>{lot.date}</td>
+          <td style={{color:'#5a6478',fontSize:10,textTransform:'uppercase'}}>{lot.action}</td>
+          <td/>
+          <td style={{textAlign:'right',color:'#5a6478',fontSize:11,fontFamily:'Space Mono'}}>{fmt(lot.quantity)}</td>
+          <td style={{textAlign:'right',color:'#5a6478',fontSize:11,fontFamily:'Space Mono'}}>{fmt(lot.entry_price,4)}</td>
+          <td style={{textAlign:'right'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:4}}>
+              <input type="number" step="any"
+                placeholder={lot.stop_loss ? fmt(lot.stop_loss,4) : 'set stop'}
+                value={slVals[lot.order_id] ?? (lot.stop_loss||'')}
+                onChange={e=>setSlVals(s=>({...s,[lot.order_id]:e.target.value}))}
+                style={inputSt}
+              />
+              <button onClick={e=>{e.stopPropagation();saveSL(lot.order_id);}}
+                disabled={saving[lot.order_id]}
+                style={{...S.btn(true),padding:'3px 8px',fontSize:10}}>
+                {saving[lot.order_id]?'…':'Save'}
+              </button>
+              {errs[lot.order_id] && <span style={{fontSize:10,color:RED}}>{errs[lot.order_id]}</span>}
+            </div>
+          </td>
+          <td colSpan={2}/>
+        </tr>
+      ))}
+    </>
   );
 }
 
@@ -881,15 +935,22 @@ function DiagnosticsPanel() {
 
 function ReviewQueue({pending, onRefresh}) {
   const [approving, setApproving] = React.useState(false);
+  const [batchErr, setBatchErr] = React.useState('');
 
   const approveAll = async () => {
-    setApproving(true);
-    await Promise.all(pending.map(r=>api(`/review/${r.id}/approve`,{method:'POST'})));
-    await onRefresh(); setApproving(false);
+    setApproving(true); setBatchErr('');
+    try {
+      await Promise.all(pending.map(r=>api(`/review/${r.id}/approve`,{method:'POST'})));
+      await onRefresh();
+    } catch(e) { setBatchErr(e.message || String(e)); }
+    setApproving(false);
   };
   const rejectAll = async () => {
-    await Promise.all(pending.map(r=>api(`/review/${r.id}/reject`,{method:'POST'})));
-    await onRefresh();
+    setBatchErr('');
+    try {
+      await Promise.all(pending.map(r=>api(`/review/${r.id}/reject`,{method:'POST'})));
+      await onRefresh();
+    } catch(e) { setBatchErr(e.message || String(e)); }
   };
 
   if (pending.length===0) return (
@@ -903,10 +964,11 @@ function ReviewQueue({pending, onRefresh}) {
 
   return (
     <>
-      <div style={{display:'flex',gap:10,alignItems:'center',marginBottom:16}}>
+      <div style={{display:'flex',gap:10,alignItems:'center',marginBottom:16,flexWrap:'wrap'}}>
         <span style={{fontSize:12,color:'#5a6478'}}>{pending.length} order(s) awaiting review</span>
         <button style={S.btn(true)} onClick={approveAll} disabled={approving}>{approving?'Approving…':'Approve All'}</button>
         <button style={S.btn()} onClick={rejectAll}>Reject All</button>
+        {batchErr && <span style={{fontSize:11,color:RED,fontFamily:'Space Mono'}}>{batchErr}</span>}
       </div>
       {pending.map(r=><ReviewItem key={r.id} item={r} onRefresh={onRefresh}/>)}
     </>
@@ -915,6 +977,26 @@ function ReviewQueue({pending, onRefresh}) {
 
 function ReviewItem({item, onRefresh}) {
   const [open, setOpen] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState('');
+  const [stopLoss, setStopLoss] = React.useState(item.normalized?.stop_loss_at_entry || '');
+
+  const act = async (action) => {
+    setBusy(true); setErr('');
+    try {
+      const opts = {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'};
+      if (action === 'approve') {
+        const sl = parseFloat(stopLoss);
+        opts.body = JSON.stringify({stop_loss: sl > 0 ? sl : null});
+      }
+      await api(`/review/${item.id}/${action}`, opts);
+      await onRefresh();
+    } catch(e) {
+      setErr(e.message || String(e));
+      setBusy(false);
+    }
+  };
+
   return (
     <div style={{marginBottom:6,border:'1px solid rgba(255,255,255,0.06)',borderRadius:6,overflow:'hidden'}}>
       <button onClick={()=>setOpen(!open)} style={{
@@ -943,9 +1025,23 @@ function ReviewItem({item, onRefresh}) {
               <pre style={{fontSize:10,color:'#5a6478',whiteSpace:'pre-wrap',wordBreak:'break-all'}}>{JSON.stringify(item.raw,null,2)}</pre>
             </div>
           </div>
-          <div style={{display:'flex',gap:8}}>
-            <button style={S.btn(true)} onClick={async()=>{ await api(`/review/${item.id}/approve`,{method:'POST'}); onRefresh(); }}>Approve</button>
-            <button style={S.btn()} onClick={async()=>{ await api(`/review/${item.id}/reject`,{method:'POST'}); onRefresh(); }}>Reject</button>
+          <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:10}}>
+            <span style={{fontSize:11,color:'#5a6478',fontFamily:'Space Grotesk'}}>Stop Loss</span>
+            <input
+              type="number" step="any" placeholder="e.g. 148.50"
+              value={stopLoss}
+              onChange={e=>setStopLoss(e.target.value)}
+              style={{width:110,padding:'4px 8px',background:'#0a0d12',border:'1px solid rgba(255,255,255,0.12)',
+                borderRadius:4,color:'#c8d0e0',fontSize:12,fontFamily:'Space Mono',outline:'none'}}
+            />
+            {stopLoss && <span style={{fontSize:11,color:'#5a6478',fontFamily:'Space Mono'}}>
+              Risk/share: {item.normalized?.price ? Math.abs(item.normalized.price - parseFloat(stopLoss)).toFixed(4) : '—'}
+            </span>}
+          </div>
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            <button style={S.btn(true)} onClick={()=>act('approve')} disabled={busy}>{busy?'Working…':'Approve'}</button>
+            <button style={S.btn()} onClick={()=>act('reject')} disabled={busy}>Reject</button>
+            {err && <span style={{fontSize:11,color:RED,fontFamily:'Space Mono'}}>{err}</span>}
           </div>
         </div>
       )}

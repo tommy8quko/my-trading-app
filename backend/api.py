@@ -23,27 +23,41 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 # ── Live price helper ─────────────────────────────────────────────────────────
 
-def _fetch_prices(symbols: list[str]) -> dict[str, float | None]:
-    """Fetch last close via yfinance; returns None per symbol on any failure."""
-    if not symbols:
+def _symbol_to_yf_ticker(symbol: str, exchange: str) -> str:
+    """Convert a stored symbol to the yfinance ticker format."""
+    ex = (exchange or "").upper()
+    # HK Exchange: strip leading zeros from numeric symbols, append .HK
+    if ex in ("HKEX", "SEHK", "HKG", "HK") or (symbol.isdigit() and ex not in ("NYSE", "NASDAQ", "AMEX")):
+        return f"{symbol.lstrip('0') or '0'}.HK"
+    return symbol
+
+
+def _fetch_prices(positions: list[tuple[str, str]]) -> dict[str, float | None]:
+    """Fetch last close via yfinance for (symbol, exchange) pairs; keyed by original symbol."""
+    if not positions:
         return {}
+    # Build ticker→original_symbol mapping (multiple symbols may share a ticker in edge cases)
+    ticker_map: dict[str, str] = {
+        _symbol_to_yf_ticker(sym, ex): sym for sym, ex in positions
+    }
+    tickers = list(ticker_map.keys())
     try:
         import yfinance as yf
         import pandas as pd
-        data = yf.download(symbols, period="2d", progress=False,
+        data = yf.download(tickers, period="2d", progress=False,
                            auto_adjust=True, threads=False)
         close = data["Close"] if not isinstance(data.columns, pd.MultiIndex) else data["Close"]
         result: dict[str, float | None] = {}
-        for sym in symbols:
+        for ticker, orig_sym in ticker_map.items():
             try:
-                series = close[sym] if len(symbols) > 1 else close
+                series = close[ticker] if len(tickers) > 1 else close
                 val = series.dropna().iloc[-1]
-                result[sym] = float(val) if not pd.isna(val) else None
+                result[orig_sym] = float(val) if not pd.isna(val) else None
             except Exception:
-                result[sym] = None
+                result[orig_sym] = None
         return result
     except Exception:
-        return {sym: None for sym in symbols}
+        return {sym: None for sym, _ in positions}
 
 
 # ── Portfolio ─────────────────────────────────────────────────────────────────
@@ -52,7 +66,7 @@ def _fetch_prices(symbols: list[str]) -> dict[str, float | None]:
 def get_portfolio():
     open_pos, closed = build_portfolio()
 
-    prices = _fetch_prices([p.symbol for p in open_pos])
+    prices = _fetch_prices([(p.symbol, p.exchange) for p in open_pos])
 
     def _pos_pnl(p, price):
         if price is None:
@@ -172,10 +186,15 @@ def get_pending():
     return result
 
 
+class ApproveRequest(BaseModel):
+    notes: str = ""
+    stop_loss: float | None = None
+
 @app.post("/api/review/{queue_id}/approve")
-def approve(queue_id: str, notes: str = ""):
+def approve(queue_id: str, req: ApproveRequest = None):
+    req = req or ApproveRequest()
     try:
-        approve_item(queue_id, notes=notes)
+        approve_item(queue_id, notes=req.notes, stop_loss=req.stop_loss)
         return {"ok": True}
     except Exception as e:
         raise HTTPException(400, str(e))
@@ -242,6 +261,16 @@ class OrderInsert(BaseModel):
     fees: float = 0.0
     currency: str
     stop_loss: float | None = None
+
+class StopLossUpdate(BaseModel):
+    stop_loss: float | None = None
+
+@app.patch("/api/orders/{order_id}/stop_loss")
+def update_stop_loss(order_id: str, body: StopLossUpdate):
+    get_supabase().table("orders").update({
+        "stop_loss_at_entry": body.stop_loss if body.stop_loss and body.stop_loss > 0 else None,
+    }).eq("id", order_id).execute()
+    return {"ok": True}
 
 @app.put("/api/orders/{order_id}")
 def update_order(order_id: str, body: OrderUpdate):

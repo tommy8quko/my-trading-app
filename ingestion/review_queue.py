@@ -35,17 +35,21 @@ def fetch_pending(limit: int = 100) -> list[dict[str, Any]]:
     return result.data
 
 
-def approve_item(queue_id: str, notes: str = "") -> None:
+def approve_item(queue_id: str, notes: str = "", stop_loss: float | None = None) -> None:
     """Mark a review_queue row as approved and insert into orders."""
     client = get_supabase()
     row = client.table("review_queue").select("*").eq("id", queue_id).single().execute().data
     if not row:
         raise ValueError(f"Review item {queue_id} not found")
 
+    normalized = dict(row["normalized_json"] or {})
+    if stop_loss is not None and stop_loss > 0:
+        normalized["stop_loss_at_entry"] = stop_loss
+
     # ignore_duplicates=True: if this order was already approved via a duplicate
     # queue entry (same email matched two sender filters), skip silently.
     client.table("orders").upsert(
-        row["normalized_json"],
+        normalized,
         on_conflict="account_id,external_order_id",
         ignore_duplicates=True,
     ).execute()
