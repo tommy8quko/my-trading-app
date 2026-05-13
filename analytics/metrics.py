@@ -124,6 +124,35 @@ def breakdown_by_dow(trades: list[ClosedTrade]) -> dict[str, Any]:
     }
 
 
+_HOLD_BUCKETS = [
+    ("Intraday",  0,  0),
+    ("1–3 days",  1,  3),
+    ("4–10 days", 4, 10),
+    ("11–30 days",11, 30),
+    ("31+ days",  31, 9999),
+]
+
+
+def breakdown_by_holding_period(trades: list[ClosedTrade]) -> dict[str, Any]:
+    groups: dict[str, list[ClosedTrade]] = {label: [] for label, *_ in _HOLD_BUCKETS}
+    for t in trades:
+        days = (t.exit_date - t.entry_date).days
+        for label, lo, hi in _HOLD_BUCKETS:
+            if lo <= days <= hi:
+                groups[label].append(t)
+                break
+    return {
+        label: {
+            "count": len(ts),
+            "win_rate": win_rate(ts),
+            "total_pnl": sum(t.realized_pnl for t in ts),
+            "avg_days": round(sum((t.exit_date - t.entry_date).days for t in ts) / len(ts), 1) if ts else 0,
+        }
+        for label, ts in groups.items()
+        if ts
+    }
+
+
 def summary_dict(trades: list[ClosedTrade]) -> dict[str, Any]:
     """All key metrics in one dict for easy display."""
     return {

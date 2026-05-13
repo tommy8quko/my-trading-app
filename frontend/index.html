@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trading Journal</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body,#root{height:100%;overflow:hidden}
+body{background:#090c10;color:#c8d0e0;font-family:'Space Grotesk',sans-serif;font-size:13px}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:2px}
+button{font-family:inherit;cursor:pointer}
+input,select,textarea{background:#141a24;border:1px solid rgba(255,255,255,0.06);color:#c8d0e0;font-family:'Space Mono',monospace;font-size:12px;border-radius:4px;padding:7px 10px;width:100%;outline:none}
+input:focus,select:focus,textarea:focus{border-color:rgba(68,153,255,0.5)}
+select option{background:#141a24}
+table{width:100%;border-collapse:collapse}
+th{font:500 10px/1 'Space Grotesk',sans-serif;color:#5a6478;text-transform:uppercase;letter-spacing:.08em;padding:8px 12px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.06)}
+td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.04);font:400 12px/1 'Space Mono',monospace;color:#5a6478}
+tr:hover td{background:rgba(255,255,255,0.02)}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const API    = '/api';
+const ACCENT = '#4499ff';
+const GREEN  = '#3ecf8e';
+const RED    = '#f05b6b';
+const YELLOW = '#f5b844';
+
+const api = async (path, opts={}) => {
+  const r = await fetch(API + path, opts);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+};
+
+const fmt     = (n, dec=0) => n == null ? '—' : Number(n).toLocaleString(undefined,{minimumFractionDigits:dec,maximumFractionDigits:dec});
+const pct     = n => n == null ? '—' : (n*100).toFixed(1)+'%';
+const pnlColor = v => v > 0 ? GREEN : v < 0 ? RED : '#c8d0e0';
+
+// Sort an array of objects by a key; nulls always sink to bottom
+const applySort = (rows, col, dir) => {
+  if (!col) return rows;
+  return [...rows].sort((a, b) => {
+    const av = a[col], bv = b[col];
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    const cmp = typeof av === 'string' ? av.localeCompare(bv) : av - bv;
+    return dir === 'asc' ? cmp : -cmp;
+  });
+};
+
+const S = {
+  hdr: {fontSize:10,color:'#5a6478',textTransform:'uppercase',letterSpacing:'.08em',fontFamily:'Space Grotesk',fontWeight:500,marginBottom:6},
+  val: {fontSize:20,fontFamily:'Space Mono',fontWeight:700,color:'#c8d0e0'},
+  ticker: {font:'700 13px/1 "Space Mono",monospace',color:'#c8d0e0'},
+  btn: (primary) => ({
+    padding:'7px 16px',
+    background: primary ? ACCENT : 'rgba(255,255,255,0.07)',
+    border:'none',borderRadius:6,
+    color: primary ? '#090c10' : '#c8d0e0',
+    fontSize:12,fontFamily:'Space Grotesk',fontWeight: primary ? 600 : 400,
+  }),
+};
+
+// ── Sidebar ───────────────────────────────────────────────────────────────────
+const NAV = [
+  {id:'dashboard', label:'Dashboard'},
+  {id:'journal',   label:'Journal'},
+  {id:'analysis',  label:'Analysis'},
+  {id:'data',      label:'Data'},
+];
+
+function Sidebar({active, onNav}) {
+  return (
+    <div style={{width:200,background:'#090c10',borderRight:'1px solid rgba(255,255,255,0.06)',
+      display:'flex',flexDirection:'column',flexShrink:0}}>
+      <div style={{padding:'16px',borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
+        <div style={{fontSize:13,fontWeight:700,color:'#c8d0e0',letterSpacing:'-0.01em'}}>Trading Journal</div>
+        <div style={{fontSize:10,color:'#5a6478',marginTop:3,fontFamily:'Space Mono',letterSpacing:'.06em'}}>IBKR · CHIEF HK</div>
+      </div>
+      <nav style={{padding:'8px 0'}}>
+        {NAV.map(n => (
+          <button key={n.id} onClick={()=>onNav(n.id)} style={{
+            display:'flex',alignItems:'center',gap:10,width:'100%',padding:'9px 16px',
+            background: active===n.id ? 'rgba(68,153,255,0.1)' : 'transparent',
+            borderLeft: active===n.id ? `2px solid ${ACCENT}` : '2px solid transparent',
+            borderTop:'none',borderRight:'none',borderBottom:'none',
+            color: active===n.id ? '#c8d0e0' : '#5a6478',
+            fontSize:10,fontFamily:'Space Grotesk',fontWeight:500,
+            letterSpacing:'.08em',textTransform:'uppercase',
+            marginBottom:1,textAlign:'left',
+          }}>
+            {n.label}
+          </button>
+        ))}
+      </nav>
+    </div>
+  );
+}
+
+// ── Tab bar ───────────────────────────────────────────────────────────────────
+function TabBar({tabs, active, onChange}) {
+  return (
+    <div style={{display:'flex',borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
+      {tabs.map(t => (
+        <button key={t} onClick={()=>onChange(t)} style={{
+          padding:'10px 18px',background:'transparent',border:'none',
+          borderBottom: active===t ? `2px solid ${ACCENT}` : '2px solid transparent',
+          color: active===t ? ACCENT : '#5a6478',
+          fontSize:10,fontFamily:'Space Grotesk',fontWeight:500,
+          letterSpacing:'.08em',textTransform:'uppercase',marginBottom:-1,
+        }}>{t}</button>
+      ))}
+    </div>
+  );
+}
+
+// ── Page header ───────────────────────────────────────────────────────────────
+function PageHeader({title}) {
+  return (
+    <div style={{height:40,display:'flex',alignItems:'center',padding:'0 20px',
+      borderBottom:'1px solid rgba(255,255,255,0.06)',flexShrink:0,background:'#090c10'}}>
+      <span style={{fontSize:11,fontWeight:600,color:'#5a6478',letterSpacing:'.12em',textTransform:'uppercase'}}>{title}</span>
+    </div>
+  );
+}
+
+// ── Equity Curve ──────────────────────────────────────────────────────────────
+function EquityCurve({data}) {
+  const [range,  setRange]  = React.useState('ALL');
+  const [hover,  setHover]  = React.useState(null); // {idx, hx, hy}
+  const [dims,   setDims]   = React.useState({w:560, h:150});
+  const wrapRef = React.useRef(null);
+
+  // Re-measure whenever the panel is resized
+  React.useEffect(()=>{
+    if (!wrapRef.current) return;
+    const ro = new ResizeObserver(entries => {
+      const {width, height} = entries[0].contentRect;
+      if (width > 0 && height > 0) setDims({w: Math.floor(width), h: Math.floor(height)});
+    });
+    ro.observe(wrapRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  if (!data || data.length === 0) return (
+    <div style={{height:'100%',display:'flex',alignItems:'center',justifyContent:'center',color:'#5a6478',fontSize:12}}>No data</div>
+  );
+
+  const now = new Date();
+  const cutDays = {'1M':30,'3M':90,'6M':180};
+  const pts = range==='ALL' ? data : (()=>{
+    const filtered = data.filter(d => (now - new Date(d.date))/86400000 <= cutDays[range]);
+    return filtered.length > 1 ? filtered : data;
+  })();
+
+  // viewBox dimensions match container pixels 1-to-1 so mouse coords map directly
+  const W = dims.w, H = dims.h;
+  const PL=42, PR=12, PT=10, PB=22;
+  const cw = W-PL-PR, ch = H-PT-PB;
+  const vals = pts.map(d=>d.pnl);
+  const minV = Math.min(0,...vals), maxV = Math.max(0,...vals);
+  const rng  = maxV - minV || 1;
+  const px = i => PL + (i/(pts.length-1||1))*cw;
+  const py = v => PT + (1-(v-minV)/rng)*ch;
+
+  const linePts = pts.map((d,i)=>`${px(i)},${py(d.pnl)}`).join(' ');
+  const zeroY   = py(0);
+  const areaPath = `M${px(0)},${py(pts[0].pnl)} `
+    + pts.slice(1).map((d,i)=>`L${px(i+1)},${py(d.pnl)}`).join(' ')
+    + ` L${px(pts.length-1)},${zeroY} L${px(0)},${zeroY} Z`;
+
+  const yTicks = [minV, (minV+maxV)/2, maxV];
+  const xIdxs  = pts.length > 2 ? [0, Math.floor((pts.length-1)/2), pts.length-1] : [0, pts.length-1];
+
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const fmtDate = s => { const [,m,d] = s.split('-'); return `${MONTHS[+m-1]} ${d}`; };
+
+  const onMouseMove = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const idx = pts.reduce((best,_,i) =>
+      Math.abs(px(i)-mouseX) < Math.abs(px(best)-mouseX) ? i : best, 0);
+    setHover({idx, hx: mouseX, hy: py(pts[idx].pnl)});
+  };
+
+  // Clamp tooltip so it stays within the SVG area
+  const ttLeft = hover ? Math.max(4, Math.min(hover.hx - 52, W - 120)) : 0;
+  const ttTop  = hover ? Math.max(4, hover.hy - 60) : 0;
+
+  return (
+    <div style={{height:'100%', display:'flex', flexDirection:'column'}}>
+      {/* header */}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6,flexShrink:0}}>
+        <div style={S.hdr}>Equity Curve</div>
+        <div style={{display:'flex',gap:2}}>
+          {['1M','3M','6M','ALL'].map(r=>(
+            <button key={r} onClick={()=>setRange(r)} style={{
+              padding:'3px 8px',fontSize:9,borderRadius:4,border:'none',
+              background: range===r ? `${ACCENT}22` : 'transparent',
+              color: range===r ? ACCENT : '#5a6478',
+              fontFamily:'Space Mono',fontWeight:700,letterSpacing:'.04em',
+            }}>{r}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* SVG wrapper — ResizeObserver measures this, tooltip anchors here */}
+      <div ref={wrapRef} style={{flex:1, position:'relative', minHeight:0}}>
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          style={{width:'100%', height:'100%', display:'block', overflow:'visible'}}
+          preserveAspectRatio="none"
+          onMouseMove={onMouseMove}
+          onMouseLeave={()=>setHover(null)}
+        >
+          <defs>
+            <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"   stopColor="#4499ff" stopOpacity="0.25"/>
+              <stop offset="100%" stopColor="#4499ff" stopOpacity="0"/>
+            </linearGradient>
+          </defs>
+          {yTicks.map((v,i) => (
+            <line key={i} x1={PL} y1={py(v)} x2={W-PR} y2={py(v)} stroke="rgba(255,255,255,0.04)" strokeWidth="1"/>
+          ))}
+          <line x1={PL} y1={zeroY} x2={W-PR} y2={zeroY} stroke="rgba(255,255,255,0.15)" strokeWidth="1" strokeDasharray="4,3"/>
+          <path d={areaPath} fill="url(#eqGrad)"/>
+          <polyline points={linePts} fill="none" stroke="#4499ff" strokeWidth="2" strokeLinejoin="round"/>
+          {/* resting last-point dot — hidden when hover is active */}
+          {!hover && <circle cx={px(pts.length-1)} cy={py(pts[pts.length-1].pnl)} r="3" fill="#4499ff"/>}
+          {yTicks.map((v,i) => (
+            <text key={i} x={PL-5} y={py(v)+3} textAnchor="end" fontSize="9" fill="#5a6478" fontFamily="Space Mono">{fmt(v,0)}</text>
+          ))}
+          {xIdxs.map((idx,i) => (
+            <text key={i} x={px(idx)} y={H-3} textAnchor="middle" fontSize="9" fill="#5a6478" fontFamily="Space Mono">
+              {pts[idx].date.slice(5)}
+            </text>
+          ))}
+          {/* crosshair + hover dot */}
+          {hover && <>
+            <line x1={hover.hx} y1={PT} x2={hover.hx} y2={H-PB} stroke="rgba(255,255,255,0.3)" strokeWidth="1"/>
+            <circle cx={hover.hx} cy={hover.hy} r="4" fill="#4499ff" stroke="#090c10" strokeWidth="1.5"/>
+          </>}
+        </svg>
+
+        {/* floating tooltip */}
+        {hover && (
+          <div style={{
+            position:'absolute', left:ttLeft, top:ttTop,
+            background:'#141a24', border:'1px solid rgba(255,255,255,0.1)',
+            borderRadius:4, padding:'6px 10px',
+            fontFamily:'Space Mono', fontSize:11,
+            pointerEvents:'none', zIndex:20, whiteSpace:'nowrap',
+          }}>
+            <div style={{color:'#5a6478', marginBottom:3}}>{fmtDate(pts[hover.idx].date)}</div>
+            <div style={{color: pts[hover.idx].pnl >= 0 ? GREEN : RED, fontWeight:700}}>
+              {pts[hover.idx].pnl >= 0 ? '+' : ''}{fmt(pts[hover.idx].pnl, 2)}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Sortable table header cell ────────────────────────────────────────────────
+function SortTh({col, label, sort, onSort, align='left', style={}}) {
+  const active = sort.col === col;
+  return (
+    <th onClick={()=>onSort(col)} style={{
+      cursor:'pointer', userSelect:'none', textAlign:align,
+      color: active ? ACCENT : '#5a6478', ...style,
+    }}>
+      {label}
+      <span style={{marginLeft:4,fontSize:8,verticalAlign:'middle',
+        color: active ? ACCENT : 'rgba(90,100,120,0.35)'}}>
+        {active ? (sort.dir==='asc' ? '▲' : '▼') : '⇅'}
+      </span>
+    </th>
+  );
+}
+
+// ── Resize handle ─────────────────────────────────────────────────────────────
+function ResizeHandle({dir, active, onMouseDown}) {
+  const [hover, setHover] = React.useState(false);
+  const isV = dir === 'v';
+  return (
+    <div
+      onMouseDown={onMouseDown}
+      onMouseEnter={()=>setHover(true)}
+      onMouseLeave={()=>setHover(false)}
+      style={{
+        flexShrink: 0,
+        width:      isV ? '4px' : '100%',
+        height:     isV ? '100%' : '4px',
+        background: active ? '#4499ff' : hover ? 'rgba(68,153,255,0.3)' : 'rgba(255,255,255,0.06)',
+        cursor:     isV ? 'col-resize' : 'row-resize',
+        transition: 'background 0.15s',
+        zIndex: 10,
+      }}
+    />
+  );
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+function Dashboard() {
+  const [data,      setData]      = React.useState(null);
+  const [metrics,   setMetrics]   = React.useState(null);
+  const [currency,  setCurrency]  = React.useState('USD');
+  const [loading,   setLoading]   = React.useState(true);
+  const [kpiWidth,  setKpiWidth]  = React.useState(() => parseInt(localStorage.getItem('tj_kpiWidth')  || '200'));
+  const [equityPct, setEquityPct] = React.useState(() => parseFloat(localStorage.getItem('tj_equityPct') || '45'));
+  const [dragging,  setDragging]  = React.useState(null); // 'v' | 'h' | null
+  const [posSort,   setPosSort]   = React.useState({col:null, dir:'asc'});
+  const containerRef = React.useRef(null);
+  const rightRef     = React.useRef(null);
+
+  const load = async (ccy) => {
+    setLoading(true);
+    const [p, m] = await Promise.all([api('/portfolio'), api(`/metrics?currency=${ccy}`)]);
+    setData(p); setMetrics(m); setLoading(false);
+  };
+  React.useEffect(()=>{ load(currency); }, [currency]);
+  React.useEffect(()=>{ localStorage.setItem('tj_kpiWidth',  String(kpiWidth));  }, [kpiWidth]);
+  React.useEffect(()=>{ localStorage.setItem('tj_equityPct', String(equityPct)); }, [equityPct]);
+
+  if (loading) return <Spinner/>;
+
+  const currencies = metrics.currencies || ['USD'];
+  const kpis = [
+    {label:'Total P&L',     val:`${fmt(metrics.total_pnl,2)} ${currency}`, color:pnlColor(metrics.total_pnl)},
+    {label:'Win Rate',      val:pct(metrics.win_rate),                     color:metrics.win_rate>=0.5?GREEN:RED},
+    {label:'Max Drawdown',  val:fmt(metrics.max_drawdown,2),               color:RED},
+    {label:'Profit Factor', val:fmt(metrics.profit_factor,2),              color:metrics.profit_factor>=1?GREEN:RED},
+    {label:'Avg Win',       val:'+'+fmt(metrics.avg_win,2),                color:GREEN},
+    {label:'Avg Loss',      val:fmt(metrics.avg_loss,2),                   color:RED},
+    {label:'Trades',        val:metrics.total_trades},
+    {label:'Pending Review',val:metrics.pending_review, color:metrics.pending_review>0?YELLOW:'#c8d0e0'},
+  ];
+
+  const startVertDrag = (e) => {
+    e.preventDefault();
+    setDragging('v');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    const onMove = (ev) => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      setKpiWidth(Math.max(140, Math.min(320, ev.clientX - rect.left)));
+    };
+    const onUp = () => {
+      setDragging(null);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
+
+  const startHorizDrag = (e) => {
+    e.preventDefault();
+    setDragging('h');
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+    const onMove = (ev) => {
+      if (!rightRef.current) return;
+      const rect = rightRef.current.getBoundingClientRect();
+      const pct = ((ev.clientY - rect.top) / rect.height) * 100;
+      setEquityPct(Math.max(20, Math.min(80, pct)));
+    };
+    const onUp = () => {
+      setDragging(null);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
+
+  return (
+    <div ref={containerRef} style={{flex:1,display:'flex',overflow:'hidden'}}>
+
+      {/* ── KPI column ─────────────────────────────────────────────────────── */}
+      <div style={{width:kpiWidth,display:'flex',flexDirection:'column',flexShrink:0,overflow:'auto'}}>
+        {currencies.length > 1 && (
+          <div style={{padding:'14px 14px 6px',display:'flex',gap:6}}>
+            {currencies.map(c=>(
+              <button key={c} onClick={()=>setCurrency(c)} style={{
+                flex:1,padding:'5px 0',fontSize:10,borderRadius:4,border:'none',
+                background: currency===c ? `${ACCENT}22` : 'rgba(255,255,255,0.05)',
+                color: currency===c ? ACCENT : '#5a6478',
+                fontFamily:'Space Mono',fontWeight:700,letterSpacing:'.06em',
+              }}>{c}</button>
+            ))}
+          </div>
+        )}
+        {kpis.map((k,i)=>(
+          <div key={i} style={{padding:'12px 16px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
+            <div style={S.hdr}>{k.label}</div>
+            <div style={{...S.val,color:k.color||'#c8d0e0'}}>{k.val}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Vertical resize handle ──────────────────────────────────────────── */}
+      <ResizeHandle dir="v" active={dragging==='v'} onMouseDown={startVertDrag}/>
+
+      {/* ── Right panel ────────────────────────────────────────────────────── */}
+      <div ref={rightRef} style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
+
+        {/* Equity curve — height driven by equityPct; flex column so EquityCurve fills it */}
+        <div style={{flex:`0 0 ${equityPct}%`,overflow:'hidden',padding:'16px 20px',display:'flex',flexDirection:'column'}}>
+          <EquityCurve data={metrics.equity_curve}/>
+        </div>
+
+        {/* ── Horizontal resize handle ──────────────────────────────────────── */}
+        <ResizeHandle dir="h" active={dragging==='h'} onMouseDown={startHorizDrag}/>
+
+        {/* Open positions */}
+        <div style={{flex:1,overflow:'auto',padding:'16px 20px'}}>
+          <div style={{...S.hdr,marginBottom:12}}>Open Positions ({data.open_positions.length})</div>
+          {data.open_positions.length === 0
+            ? <div style={{color:'#5a6478',fontSize:12}}>No open positions</div>
+            : (() => {
+              const tog = col => setPosSort(s=>({col, dir:s.col===col&&s.dir==='asc'?'desc':'asc'}));
+              const rows = applySort(data.open_positions, posSort.col, posSort.dir);
+              return (
+                <table>
+                  <thead><tr>
+                    <SortTh col="symbol"        label="Symbol"    sort={posSort} onSort={tog}/>
+                    <SortTh col="currency"      label="Ccy"       sort={posSort} onSort={tog}/>
+                    <SortTh col="direction"     label="Dir"       sort={posSort} onSort={tog}/>
+                    <SortTh col="quantity"      label="Qty"       sort={posSort} onSort={tog} align="right"/>
+                    <SortTh col="avg_entry"     label="Avg Entry" sort={posSort} onSort={tog} align="right"/>
+                    <SortTh col="stop_loss"     label="Stop"      sort={posSort} onSort={tog} align="right"/>
+                    <SortTh col="unrealized_pnl" label="P&L"      sort={posSort} onSort={tog} align="right"/>
+                    <SortTh col="pct_return"    label="% Ret"     sort={posSort} onSort={tog} align="right"/>
+                  </tr></thead>
+                  <tbody>
+                    {rows.map((p,i)=>(
+                      <tr key={i}>
+                        <td style={S.ticker}>{p.symbol}</td>
+                        <td>{p.currency}</td>
+                        <td style={{color:'#5a6478',textTransform:'uppercase',fontSize:10,letterSpacing:'.06em'}}>{p.direction}</td>
+                        <td style={{textAlign:'right'}}>{fmt(p.quantity)}</td>
+                        <td style={{textAlign:'right'}}>{fmt(p.avg_entry,4)}</td>
+                        <td style={{textAlign:'right',color:RED}}>{p.stop_loss ? fmt(p.stop_loss,4) : '—'}</td>
+                        <td style={{textAlign:'right',fontWeight:700,color:p.unrealized_pnl!=null?pnlColor(p.unrealized_pnl):'#5a6478'}}>
+                          {p.unrealized_pnl!=null ? (p.unrealized_pnl>=0?'+':'')+fmt(p.unrealized_pnl,2) : '—'}
+                        </td>
+                        <td style={{textAlign:'right',color:p.pct_return!=null?pnlColor(p.pct_return):'#5a6478'}}>
+                          {p.pct_return!=null ? (p.pct_return>=0?'+':'')+p.pct_return.toFixed(2)+'%' : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              );
+            })()
+          }
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Journal ───────────────────────────────────────────────────────────────────
+function Journal() {
+  const [tab,        setTab]        = React.useState('Trade Log');
+  const [data,       setData]       = React.useState(null);
+  const [filter,     setFilter]     = React.useState('All');
+  const [tradeSort,  setTradeSort]  = React.useState({col:'exit_date', dir:'desc'});
+
+  React.useEffect(()=>{ api('/portfolio').then(setData); }, []);
+  if (!data) return <Spinner/>;
+
+  const closed  = data.closed_trades;
+  const symbols = ['All',...new Set(closed.map(t=>t.symbol))].sort();
+  const filtered = filter==='All' ? closed : closed.filter(t=>t.symbol===filter);
+
+  return (
+    <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+      <div style={{padding:'0 20px',flexShrink:0}}>
+        <TabBar tabs={['Trade Log','Trade Replay']} active={tab} onChange={setTab}/>
+      </div>
+      <div style={{flex:1,overflow:'auto',padding:'16px 20px'}}>
+        {tab==='Trade Log' && (()=>{
+          const tog = col => setTradeSort(s=>({col, dir:s.col===col&&s.dir==='asc'?'desc':'asc'}));
+          const rows = applySort(closed, tradeSort.col, tradeSort.dir);
+          return (
+            <>
+              <div style={{...S.hdr,marginBottom:12}}>{closed.length} closed trades</div>
+              <table>
+                <thead><tr>
+                  <SortTh col="symbol"     label="Symbol"  sort={tradeSort} onSort={tog}/>
+                  <SortTh col="currency"   label="Ccy"     sort={tradeSort} onSort={tog}/>
+                  <SortTh col="direction"  label="Dir"     sort={tradeSort} onSort={tog}/>
+                  <SortTh col="entry_date" label="Entry"   sort={tradeSort} onSort={tog}/>
+                  <SortTh col="exit_date"  label="Exit"    sort={tradeSort} onSort={tog}/>
+                  <SortTh col="quantity"   label="Qty"     sort={tradeSort} onSort={tog} align="right"/>
+                  <SortTh col="avg_entry"  label="Avg In"  sort={tradeSort} onSort={tog} align="right"/>
+                  <SortTh col="avg_exit"   label="Avg Out" sort={tradeSort} onSort={tog} align="right"/>
+                  <SortTh col="fees"       label="Fees"    sort={tradeSort} onSort={tog} align="right"/>
+                  <SortTh col="pnl"        label="P&L"     sort={tradeSort} onSort={tog} align="right"/>
+                  <SortTh col="r_multiple" label="R"       sort={tradeSort} onSort={tog} align="right"/>
+                </tr></thead>
+                <tbody>
+                  {rows.map((t,i)=>(
+                    <tr key={i}>
+                      <td style={S.ticker}>{t.symbol}</td>
+                      <td>{t.currency}</td>
+                      <td style={{textTransform:'uppercase',fontSize:10,letterSpacing:'.06em'}}>{t.direction}</td>
+                      <td>{t.entry_date}</td>
+                      <td>{t.exit_date}</td>
+                      <td style={{textAlign:'right'}}>{fmt(t.quantity)}</td>
+                      <td style={{textAlign:'right'}}>{fmt(t.avg_entry,4)}</td>
+                      <td style={{textAlign:'right'}}>{fmt(t.avg_exit,4)}</td>
+                      <td style={{textAlign:'right'}}>{fmt(t.fees,2)}</td>
+                      <td style={{textAlign:'right',fontWeight:700,color:pnlColor(t.pnl)}}>{t.pnl>=0?'+':''}{fmt(t.pnl,2)}</td>
+                      <td style={{textAlign:'right',color:t.r_multiple>=0?GREEN:RED}}>{t.r_multiple!=null?fmt(t.r_multiple,2)+'R':'—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          );
+        })()}
+        {tab==='Trade Replay' && (
+          <>
+            <div style={{marginBottom:12}}>
+              <select style={{maxWidth:200}} value={filter} onChange={e=>setFilter(e.target.value)}>
+                {symbols.map(s=><option key={s}>{s}</option>)}
+              </select>
+            </div>
+            {filtered.map((t,i)=><TradeCard key={i} trade={t}/>)}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TradeCard({trade:t}) {
+  const [open, setOpen] = React.useState(false);
+  const hold = Math.round((new Date(t.exit_date)-new Date(t.entry_date))/(1000*86400));
+  return (
+    <div style={{marginBottom:6,border:'1px solid rgba(255,255,255,0.06)',borderRadius:6,overflow:'hidden'}}>
+      <button onClick={()=>setOpen(!open)} style={{
+        width:'100%',display:'flex',justifyContent:'space-between',alignItems:'center',
+        padding:'10px 14px',background:'#0f1318',border:'none',color:'#c8d0e0',textAlign:'left',
+      }}>
+        <span style={{display:'flex',alignItems:'center',gap:10}}>
+          <span style={{fontFamily:'Space Mono',fontSize:10,color:'#5a6478'}}>{t.exit_date}</span>
+          <span style={{fontSize:10,color:'#5a6478',fontFamily:'Space Grotesk',textTransform:'uppercase',letterSpacing:'.06em'}}>{t.direction}</span>
+          <span style={S.ticker}>{t.symbol}</span>
+        </span>
+        <span style={{fontFamily:'Space Mono',fontWeight:700,fontSize:13,color:pnlColor(t.pnl)}}>
+          {t.pnl>=0?'+':''}{fmt(t.pnl,2)} {t.currency}
+          {t.r_multiple!=null && <span style={{marginLeft:8,fontSize:11,color:t.r_multiple>=0?GREEN:RED}}>{fmt(t.r_multiple,2)}R</span>}
+        </span>
+      </button>
+      {open && (
+        <div style={{padding:'14px',background:'#0f1318',borderTop:'1px solid rgba(255,255,255,0.06)',
+          display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12}}>
+          {[
+            ['Avg Entry',fmt(t.avg_entry,4)], ['Avg Exit',fmt(t.avg_exit,4)],
+            ['Quantity',fmt(t.quantity)],      ['Fees',fmt(t.fees,2)],
+            ['Entry Date',t.entry_date],       ['Exit Date',t.exit_date],
+            ['Holding Days',hold+'d'],         ['Initial Stop',t.initial_stop?fmt(t.initial_stop,4):'—'],
+          ].map(([l,v])=>(
+            <div key={l}>
+              <div style={S.hdr}>{l}</div>
+              <div style={{fontFamily:'Space Mono',fontSize:12,color:'#c8d0e0'}}>{v}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Analysis ──────────────────────────────────────────────────────────────────
+function Analysis() {
+  const [tab,        setTab]        = React.useState('Statistics');
+  const [stats,      setStats]      = React.useState(null);
+  const [currency,   setCurrency]   = React.useState('USD');
+  const [currencies, setCurrencies] = React.useState(['USD']);
+  const [question,   setQuestion]   = React.useState('');
+  const [prompt,     setPrompt]     = React.useState('');
+  const [generating, setGenerating] = React.useState(false);
+
+  React.useEffect(()=>{
+    api(`/metrics?currency=${currency}`).then(m=>setCurrencies(m.currencies||['USD']));
+    api(`/stats?currency=${currency}`).then(setStats);
+  }, [currency]);
+
+  const SUGGESTED = [
+    'Is my stop loss too tight?',
+    'Should I take profit earlier or hold longer?',
+    'Am I entering too early?',
+    "What's my biggest single improvement?",
+  ];
+
+  return (
+    <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+      <div style={{padding:'0 20px',flexShrink:0}}>
+        <TabBar tabs={['Statistics','AI Coach']} active={tab} onChange={setTab}/>
+      </div>
+      <div style={{flex:1,overflow:'auto',padding:'20px'}}>
+        {tab==='Statistics' && (
+          <>
+            {currencies.length > 1 && (
+              <div style={{display:'flex',gap:4,marginBottom:16}}>
+                {currencies.map(c=>(
+                  <button key={c} onClick={()=>setCurrency(c)} style={{
+                    padding:'4px 10px',fontSize:10,borderRadius:4,border:'none',
+                    background: currency===c ? `${ACCENT}22` : 'rgba(255,255,255,0.04)',
+                    color: currency===c ? ACCENT : '#5a6478',
+                    fontFamily:'Space Mono',fontWeight:700,
+                  }}>{c}</button>
+                ))}
+              </div>
+            )}
+            {stats && (
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
+                <StatsTable title="Long vs Short" rows={Object.entries(stats.by_direction).map(([k,v])=>({
+                  name:k, count:v.count, winRate:pct(v.win_rate), pnl:v.total_pnl,
+                }))}/>
+                <StatsTable title="Entry Day of Week" rows={Object.entries(stats.by_dow).map(([k,v])=>({
+                  name:k, count:v.count, winRate:pct(v.win_rate), pnl:v.total_pnl,
+                }))}/>
+                <HoldingTable rows={stats.by_holding}/>
+              </div>
+            )}
+          </>
+        )}
+        {tab==='AI Coach' && (
+          <div style={{maxWidth:640}}>
+            <p style={{color:'#5a6478',marginBottom:20,lineHeight:1.7,fontSize:12}}>
+              Generates a coaching prompt enriched with your market data — paste into claude.ai.
+            </p>
+            <div style={{marginBottom:14}}>
+              <div style={S.hdr}>Quick Questions</div>
+              <select onChange={e=>setQuestion(e.target.value)}>
+                <option value="">Custom…</option>
+                {SUGGESTED.map(q=><option key={q} value={q}>{q}</option>)}
+              </select>
+            </div>
+            <div style={{marginBottom:14}}>
+              <div style={S.hdr}>Your Question</div>
+              <textarea rows={3} value={question} onChange={e=>setQuestion(e.target.value)}
+                placeholder="Ask anything about your trading performance…" style={{resize:'vertical'}}/>
+            </div>
+            <button style={S.btn(true)} onClick={async()=>{
+              setGenerating(true);
+              try {
+                const r = await fetch(API+'/coach/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question})});
+                const d = await r.json();
+                setPrompt(d.prompt||d.response);
+              } catch(e){ alert('Error: '+e.message); }
+              setGenerating(false);
+            }} disabled={generating}>
+              {generating ? 'Generating…' : 'Generate Coaching Prompt'}
+            </button>
+            {prompt && (
+              <div style={{marginTop:16}}>
+                <textarea value={prompt} readOnly rows={16} style={{resize:'vertical'}}/>
+                <div style={{fontSize:10,color:'#5a6478',marginTop:4,fontFamily:'Space Mono'}}>
+                  ~{Math.round(prompt.length/4).toLocaleString()} tokens · {prompt.length.toLocaleString()} chars
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StatsTable({title, rows}) {
+  return (
+    <div>
+      <div style={{...S.hdr,marginBottom:10}}>{title}</div>
+      <table>
+        <thead><tr>
+          <th></th>
+          <th style={{textAlign:'right'}}>Count</th>
+          <th style={{textAlign:'right'}}>Win Rate</th>
+          <th style={{textAlign:'right'}}>Total P&L</th>
+        </tr></thead>
+        <tbody>
+          {rows.map((r,i)=>(
+            <tr key={i}>
+              <td style={{...S.ticker,fontSize:12}}>{r.name}</td>
+              <td style={{textAlign:'right'}}>{r.count}</td>
+              <td style={{textAlign:'right'}}>{r.winRate}</td>
+              <td style={{textAlign:'right',fontWeight:700,color:pnlColor(r.pnl)}}>{r.pnl>=0?'+':''}{fmt(r.pnl,0)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function HoldingTable({rows}) {
+  const ORDER = ['Intraday','1–3 days','4–10 days','11–30 days','31+ days'];
+  const entries = ORDER.filter(k => rows[k]).map(k => [k, rows[k]]);
+  if (!entries.length) return null;
+  return (
+    <div style={{gridColumn:'1 / -1'}}>
+      <div style={{...S.hdr,marginBottom:10}}>Holding Period</div>
+      <table>
+        <thead><tr>
+          <th>Period</th>
+          <th style={{textAlign:'right'}}>Count</th>
+          <th style={{textAlign:'right'}}>Win Rate</th>
+          <th style={{textAlign:'right'}}>Avg Days</th>
+          <th style={{textAlign:'right'}}>Total P&L</th>
+        </tr></thead>
+        <tbody>
+          {entries.map(([label, v])=>(
+            <tr key={label}>
+              <td style={{...S.ticker,fontSize:12}}>{label}</td>
+              <td style={{textAlign:'right'}}>{v.count}</td>
+              <td style={{textAlign:'right'}}>{pct(v.win_rate)}</td>
+              <td style={{textAlign:'right'}}>{v.avg_days}d</td>
+              <td style={{textAlign:'right',fontWeight:700,color:pnlColor(v.total_pnl)}}>{v.total_pnl>=0?'+':''}{fmt(v.total_pnl,0)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Data ──────────────────────────────────────────────────────────────────────
+function DataPage() {
+  const [tab,        setTab]        = React.useState('Import & Sync');
+  const [since,      setSince]      = React.useState(new Date().toISOString().split('T')[0]);
+  const [syncing,    setSyncing]    = React.useState(false);
+  const [syncResult, setSyncResult] = React.useState(null);
+  const [pending,    setPending]    = React.useState([]);
+  const [broker,     setBroker]     = React.useState('IBKR');
+
+  const loadPending = () => api('/review/pending').then(setPending);
+  React.useEffect(()=>{ loadPending(); }, [tab]);
+
+  const syncGmail = async () => {
+    setSyncing(true); setSyncResult(null);
+    try {
+      const r = await api('/sync/gmail',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({since})});
+      setSyncResult(r);
+    } catch(e){ setSyncResult({error:e.message}); }
+    setSyncing(false);
+  };
+
+  return (
+    <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+      <div style={{padding:'0 20px',flexShrink:0}}>
+        <TabBar tabs={['Import & Sync','Diagnostics','Review Queue']} active={tab} onChange={setTab}/>
+      </div>
+      <div style={{flex:1,overflow:'auto',padding:'20px'}}>
+
+        {tab==='Import & Sync' && (
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24,maxWidth:860}}>
+            <div>
+              <div style={{...S.hdr,fontSize:11,marginBottom:14,paddingBottom:8,borderBottom:'1px solid rgba(255,255,255,0.06)'}}>Sync from Gmail</div>
+              <div style={{marginBottom:12}}>
+                <div style={S.hdr}>Fetch emails since</div>
+                <input type="date" value={since} onChange={e=>setSince(e.target.value)}/>
+              </div>
+              <button style={S.btn(true)} onClick={syncGmail} disabled={syncing}>
+                {syncing ? 'Syncing…' : 'Sync Gmail'}
+              </button>
+              {syncResult && !syncResult.error && (
+                <div style={{marginTop:12,padding:'10px 14px',background:`${GREEN}0d`,border:`1px solid ${GREEN}26`,borderRadius:6,fontSize:12,lineHeight:1.8}}>
+                  <div style={{color:GREEN,fontWeight:600,marginBottom:6}}>Done — {syncResult.queued} queued, {syncResult.duplicates} duplicates</div>
+                  <div style={{color:'#5a6478',fontFamily:'Space Mono',fontSize:11}}>
+                    Already processed: {syncResult.skipped_already_processed}<br/>
+                    No order found: {syncResult.skipped_no_order}<br/>
+                    Errors: {syncResult.errors?.length||0}
+                  </div>
+                </div>
+              )}
+              {syncResult?.error && <div style={{marginTop:12,color:RED,fontSize:12}}>{syncResult.error}</div>}
+            </div>
+            <div>
+              <div style={{...S.hdr,fontSize:11,marginBottom:14,paddingBottom:8,borderBottom:'1px solid rgba(255,255,255,0.06)'}}>Upload CSV / XLSX</div>
+              <div style={{marginBottom:12}}>
+                <div style={S.hdr}>Broker</div>
+                <select value={broker} onChange={e=>setBroker(e.target.value)}>
+                  <option>IBKR</option><option>CHIEF</option>
+                </select>
+              </div>
+              <label style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',
+                background:'rgba(255,255,255,0.04)',border:'1px dashed rgba(255,255,255,0.08)',
+                borderRadius:6,cursor:'pointer',fontSize:12,color:'#5a6478'}}>
+                ↑ Choose CSV or XLSX file
+                <input type="file" accept=".csv,.xlsx" style={{display:'none'}} onChange={async e=>{
+                  const f = e.target.files[0]; if (!f) return;
+                  const fd = new FormData(); fd.append('file',f); fd.append('broker',broker);
+                  const r = await fetch(API+'/import/file',{method:'POST',body:fd});
+                  const d = await r.json();
+                  alert(`Queued: ${d.queued}, Duplicates: ${d.duplicates}${d.errors.length?' Errors: '+d.errors.join(', '):''}`)
+                }}/>
+              </label>
+            </div>
+          </div>
+        )}
+
+        {tab==='Diagnostics' && (
+          <div style={{maxWidth:560}}><DiagnosticsPanel/></div>
+        )}
+
+        {tab==='Review Queue' && (
+          <ReviewQueue pending={pending} onRefresh={loadPending}/>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DiagnosticsPanel() {
+  const [diagSince, setDiagSince] = React.useState(()=>{
+    const d = new Date(); d.setDate(d.getDate()-60); return d.toISOString().split('T')[0];
+  });
+  const [subjects,  setSubjects]  = React.useState(null);
+  const [chiefBody, setChiefBody] = React.useState(null);
+  const [loading1,  setLoading1]  = React.useState(false);
+  const [loading2,  setLoading2]  = React.useState(false);
+
+  return (
+    <>
+      <div style={{...S.hdr,fontSize:11,marginBottom:14,paddingBottom:8,borderBottom:'1px solid rgba(255,255,255,0.06)'}}>Preview broker email subjects</div>
+      <div style={{marginBottom:10}}>
+        <div style={S.hdr}>Since</div>
+        <input type="date" value={diagSince} onChange={e=>setDiagSince(e.target.value)} style={{maxWidth:200}}/>
+      </div>
+      <button style={S.btn()} onClick={async()=>{
+        setLoading1(true);
+        const r = await api(`/diagnostics/subjects?since=${diagSince}`);
+        setSubjects(r); setLoading1(false);
+      }} disabled={loading1}>{loading1?'Loading…':'Show broker email subjects'}</button>
+      {subjects && (
+        <div style={{marginTop:12,overflowX:'auto'}}>
+          <table><thead><tr><th>From</th><th>Subject</th><th>Date</th></tr></thead>
+          <tbody>{subjects.map((r,i)=>(
+            <tr key={i}><td>{r.from}</td><td style={{color:'#c8d0e0'}}>{r.subject}</td><td>{r.received_at}</td></tr>
+          ))}</tbody></table>
+        </div>
+      )}
+      <div style={{marginTop:24,...S.hdr,fontSize:11,marginBottom:14,paddingBottom:8,borderBottom:'1px solid rgba(255,255,255,0.06)'}}>Inspect Chief order email</div>
+      <button style={S.btn()} onClick={async()=>{
+        setLoading2(true);
+        const r = await api('/diagnostics/chief-email');
+        setChiefBody(r); setLoading2(false);
+      }} disabled={loading2}>{loading2?'Loading…':'Show Chief email (parsed)'}</button>
+      {chiefBody && (
+        <div style={{marginTop:12,padding:'10px 14px',background:'#0f1318',border:'1px solid rgba(255,255,255,0.06)',borderRadius:6,fontSize:11,fontFamily:'Space Mono',color:'#5a6478',whiteSpace:'pre-wrap',wordBreak:'break-all'}}>
+          <div style={{color:chiefBody.match?GREEN:RED,marginBottom:8}}>Intro match: {chiefBody.match||'NO MATCH'}</div>
+          <div style={{marginBottom:8}}>KV: {JSON.stringify(chiefBody.kv)}</div>
+          <div>{chiefBody.stripped?.slice(0,800)}</div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function ReviewQueue({pending, onRefresh}) {
+  const [approving, setApproving] = React.useState(false);
+
+  const approveAll = async () => {
+    setApproving(true);
+    await Promise.all(pending.map(r=>api(`/review/${r.id}/approve`,{method:'POST'})));
+    await onRefresh(); setApproving(false);
+  };
+  const rejectAll = async () => {
+    await Promise.all(pending.map(r=>api(`/review/${r.id}/reject`,{method:'POST'})));
+    await onRefresh();
+  };
+
+  if (pending.length===0) return (
+    <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:200}}>
+      <div style={{textAlign:'center',padding:'32px 40px',background:`${GREEN}0a`,border:`1px solid ${GREEN}22`,borderRadius:10}}>
+        <div style={{fontSize:22,marginBottom:10,color:GREEN}}>✓</div>
+        <div style={{fontSize:13,color:GREEN,fontWeight:600}}>No pending items — all clear</div>
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      <div style={{display:'flex',gap:10,alignItems:'center',marginBottom:16}}>
+        <span style={{fontSize:12,color:'#5a6478'}}>{pending.length} order(s) awaiting review</span>
+        <button style={S.btn(true)} onClick={approveAll} disabled={approving}>{approving?'Approving…':'Approve All'}</button>
+        <button style={S.btn()} onClick={rejectAll}>Reject All</button>
+      </div>
+      {pending.map(r=><ReviewItem key={r.id} item={r} onRefresh={onRefresh}/>)}
+    </>
+  );
+}
+
+function ReviewItem({item, onRefresh}) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <div style={{marginBottom:6,border:'1px solid rgba(255,255,255,0.06)',borderRadius:6,overflow:'hidden'}}>
+      <button onClick={()=>setOpen(!open)} style={{
+        width:'100%',display:'flex',justifyContent:'space-between',alignItems:'center',
+        padding:'10px 14px',background:'#0f1318',border:'none',color:'#c8d0e0',textAlign:'left',
+      }}>
+        <span style={{display:'flex',alignItems:'center',gap:8}}>
+          <span style={{fontSize:10,fontFamily:'Space Mono',fontWeight:700,color:ACCENT,textTransform:'uppercase',letterSpacing:'.06em'}}>{item.action}</span>
+          <span style={S.ticker}>{item.symbol}</span>
+          <span style={{color:'#5a6478',fontFamily:'Space Mono'}}>×{item.quantity}</span>
+          <span style={{color:'#5a6478',fontSize:10,letterSpacing:'.06em'}}>{item.broker}</span>
+        </span>
+        <span style={{color:item.confidence>=0.9?GREEN:YELLOW,fontSize:11,fontFamily:'Space Mono'}}>
+          {Math.round(item.confidence*100)}%
+        </span>
+      </button>
+      {open && (
+        <div style={{padding:'14px',background:'#0f1318',borderTop:'1px solid rgba(255,255,255,0.06)'}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+            <div>
+              <div style={S.hdr}>Normalized</div>
+              <pre style={{fontSize:10,color:'#5a6478',whiteSpace:'pre-wrap',wordBreak:'break-all'}}>{JSON.stringify(item.normalized,null,2)}</pre>
+            </div>
+            <div>
+              <div style={S.hdr}>Raw parsed</div>
+              <pre style={{fontSize:10,color:'#5a6478',whiteSpace:'pre-wrap',wordBreak:'break-all'}}>{JSON.stringify(item.raw,null,2)}</pre>
+            </div>
+          </div>
+          <div style={{display:'flex',gap:8}}>
+            <button style={S.btn(true)} onClick={async()=>{ await api(`/review/${item.id}/approve`,{method:'POST'}); onRefresh(); }}>Approve</button>
+            <button style={S.btn()} onClick={async()=>{ await api(`/review/${item.id}/reject`,{method:'POST'}); onRefresh(); }}>Reject</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Spinner ───────────────────────────────────────────────────────────────────
+function Spinner() {
+  return <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',color:'#5a6478',fontSize:11,fontFamily:'Space Mono',letterSpacing:'.08em'}}>LOADING…</div>;
+}
+
+// ── App root ──────────────────────────────────────────────────────────────────
+function App() {
+  const [nav, setNav] = React.useState('dashboard');
+  const titles = {dashboard:'Dashboard',journal:'Journal',analysis:'Analysis',data:'Data Management'};
+  return (
+    <div style={{display:'flex',height:'100vh',overflow:'hidden'}}>
+      <Sidebar active={nav} onNav={setNav}/>
+      <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
+        <PageHeader title={titles[nav]}/>
+        {nav==='dashboard' && <Dashboard/>}
+        {nav==='journal'   && <Journal/>}
+        {nav==='analysis'  && <Analysis/>}
+        {nav==='data'      && <DataPage/>}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
