@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 from datetime import date
 from typing import Any
-from analytics.portfolio import ClosedTrade
+from analytics.portfolio import ClosedTrade, OpenPosition
 
 
 def _winners(trades: list[ClosedTrade]) -> list[ClosedTrade]:
@@ -87,6 +87,55 @@ def cumulative_pnl(trades: list[ClosedTrade]) -> list[tuple[date, float]]:
     for t in sorted_trades:
         cum += t.realized_pnl
         result.append((t.exit_date, cum))
+    return result
+
+
+def equity_curve_full(
+    closed: list[ClosedTrade],
+    open_pos: list[OpenPosition],
+    prices: dict[str, float | None],
+) -> list[tuple[date, float]]:
+    """
+    Equity curve including:
+    - realized P&L from fully closed trades
+    - realized P&L from partial exits on still-open positions
+    - current unrealized P&L appended as today's point
+    """
+    from datetime import date as date_cls
+    events: list[tuple[date, float]] = []
+
+    for t in closed:
+        events.append((t.exit_date, t.realized_pnl))
+
+    for pos in open_pos:
+        for pe in pos.partial_exits:
+            if pos.direction == "LONG":
+                pnl = (pe.exit_price - pe.avg_entry) * pe.quantity - pe.exit_fees - pe.entry_fees_allocated
+            else:
+                pnl = (pe.avg_entry - pe.exit_price) * pe.quantity - pe.exit_fees - pe.entry_fees_allocated
+            events.append((pe.exit_date, pnl))
+
+    events.sort(key=lambda x: x[0])
+    cum = 0.0
+    result: list[tuple[date, float]] = []
+    for d, pnl in events:
+        cum += pnl
+        result.append((d, cum))
+
+    unrealized = 0.0
+    for pos in open_pos:
+        price = prices.get(pos.symbol)
+        if price is not None:
+            if pos.direction == "LONG":
+                unrealized += (price - pos.avg_entry_price) * pos.total_quantity
+            else:
+                unrealized += (pos.avg_entry_price - price) * pos.total_quantity
+
+    if unrealized != 0:
+        today = date_cls.today()
+        base = result[-1][1] if result else 0.0
+        result.append((today, base + unrealized))
+
     return result
 
 

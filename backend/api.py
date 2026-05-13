@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from analytics.portfolio import build_portfolio
-from analytics.metrics import summary_dict, breakdown_by_direction, breakdown_by_dow, breakdown_by_holding_period, cumulative_pnl
+from analytics.metrics import summary_dict, breakdown_by_direction, breakdown_by_dow, breakdown_by_holding_period, cumulative_pnl, equity_curve_full
 from ingestion.review_queue import fetch_pending, approve_item, reject_item
 from ingestion.pipeline import ingest_file
 from db.client import get_supabase
@@ -131,11 +131,13 @@ def get_portfolio():
 
 @app.get("/api/metrics")
 def get_metrics(currency: str = "USD"):
-    _, closed = build_portfolio()
+    open_pos, closed = build_portfolio()
     filtered = [t for t in closed if t.currency == currency]
     m = summary_dict(filtered) if filtered else {}
     pending = len(fetch_pending(limit=200))
-    cum = cumulative_pnl(filtered)
+    open_filtered = [p for p in open_pos if p.currency == currency]
+    prices = _fetch_prices([(p.symbol, p.exchange) for p in open_filtered]) if open_filtered else {}
+    cum = equity_curve_full(filtered, open_filtered, prices)
     return {
         "total_pnl": round(m.get("total_pnl", 0), 2),
         "win_rate": round(m.get("win_rate", 0), 4),
