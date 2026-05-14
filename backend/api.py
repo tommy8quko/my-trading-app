@@ -161,7 +161,7 @@ def get_metrics(currency: str = "USD"):
     open_pos, closed = build_portfolio()
     pending = len(fetch_pending(limit=200))
     src_currencies = sorted({t.currency for t in closed}) if closed else ["USD"]
-    currencies_out = src_currencies + (["ALL"] if len(src_currencies) > 1 else [])
+    currencies_out = (["ALL"] if len(src_currencies) > 1 else []) + src_currencies
 
     if currency == "ALL":
         # Convert non-USD trades to USD at the fixed FX rate, then compute combined metrics

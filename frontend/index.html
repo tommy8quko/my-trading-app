@@ -540,7 +540,7 @@ function ResizeHandle({dir, active, onMouseDown}) {
 function Dashboard() {
   const [data,         setData]         = React.useState(null);
   const [metricsCache, setMetricsCache] = React.useState({});
-  const [currency,     setCurrency]     = React.useState('USD');
+  const [currency,     setCurrency]     = React.useState('ALL');
   const [loading,      setLoading]      = React.useState(true);
   const [spyData,      setSpyData]      = React.useState([]);
   const [posSort,      setPosSort]      = React.useState({col:null, dir:'asc'});
@@ -548,19 +548,19 @@ function Dashboard() {
   React.useEffect(()=>{
     (async () => {
       setLoading(true);
-      const [p, usdM] = await Promise.all([api('/portfolio'), api('/metrics?currency=USD')]);
+      const [p, allM] = await Promise.all([api('/portfolio'), api('/metrics?currency=ALL')]);
       setData(p);
-      setMetricsCache({USD: usdM});
+      setMetricsCache({ALL: allM});
       setLoading(false);
-      // Background: load all other currencies and ALL so switching is instant
-      const others = (usdM.currencies || []).filter(c => c !== 'USD');
-      [...others, 'ALL'].forEach(ccy => {
+      // Background: load individual currencies so switching is instant
+      const others = (allM.currencies || []).filter(c => c !== 'ALL');
+      others.forEach(ccy => {
         api(`/metrics?currency=${ccy}`)
           .then(m => setMetricsCache(prev => ({...prev, [ccy]: m})))
           .catch(()=>{});
       });
-      if (usdM.equity_curve?.length) {
-        api(`/stats/spy?from_date=${usdM.equity_curve[0].date}`).then(setSpyData).catch(()=>{});
+      if (allM.equity_curve?.length) {
+        api(`/stats/spy?from_date=${allM.equity_curve[0].date}`).then(setSpyData).catch(()=>{});
       }
     })();
   }, []);
