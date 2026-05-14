@@ -607,7 +607,15 @@ function Dashboard() {
           {currencies.length > 1 && (
             <div style={{padding:'10px 12px 4px',display:'flex',gap:6}}>
               {currencies.map(c=>(
-                <button key={c} onClick={()=>setCurrency(c)} style={{
+                <button key={c} onClick={()=>{
+                  setCurrency(c);
+                  // If not cached yet (background fetch failed or still in-flight), fetch on-demand
+                  if (!metricsCache[c]) {
+                    api(`/metrics?currency=${c}`)
+                      .then(m => setMetricsCache(prev => ({...prev, [c]: m})))
+                      .catch(()=>{});
+                  }
+                }} style={{
                   flex:1,padding:'4px 0',fontSize:10,borderRadius:4,border:'none',
                   background:currency===c?`${ACCENT}22`:'rgba(255,255,255,0.05)',
                   color:currency===c?ACCENT:'#5a6478',
