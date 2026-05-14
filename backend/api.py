@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from datetime import date
 from typing import Any
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -194,10 +194,17 @@ class ApproveRequest(BaseModel):
     stop_loss: float | None = None
 
 @app.post("/api/review/{queue_id}/approve")
-def approve(queue_id: str, req: ApproveRequest = None):
-    req = req or ApproveRequest()
+async def approve(queue_id: str, request: Request):
     try:
-        approve_item(queue_id, notes=req.notes, stop_loss=req.stop_loss)
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            pass
+        notes = body.get("notes", "")
+        sl = body.get("stop_loss")
+        stop_loss = float(sl) if sl else None
+        approve_item(queue_id, notes=notes, stop_loss=stop_loss)
         return {"ok": True}
     except Exception as e:
         raise HTTPException(400, str(e))
