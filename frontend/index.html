@@ -23,6 +23,21 @@ table{width:100%;border-collapse:collapse}
 th{font:500 10px/1 'Space Grotesk',sans-serif;color:#5a6478;text-transform:uppercase;letter-spacing:.08em;padding:8px 12px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.06)}
 td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.04);font:400 12px/1 'Space Mono',monospace;color:#5a6478}
 tr:hover td{background:rgba(255,255,255,0.02)}
+.mobile-nav{display:none}
+@media(max-width:640px){
+  html,body,#root{height:auto;overflow-y:auto}
+  .app-root{flex-direction:column!important;height:auto!important;overflow-y:auto!important}
+  .app-sidebar{display:none!important}
+  .app-main{overflow:visible!important;height:auto!important;min-height:100vh}
+  .mobile-nav{display:flex!important;position:fixed;bottom:0;left:0;right:0;
+    background:#090c10;border-top:1px solid rgba(255,255,255,0.08);z-index:100}
+  .dash-container{flex-direction:column!important;overflow:visible!important;height:auto!important}
+  .dash-kpi{width:100%!important;display:grid!important;grid-template-columns:repeat(2,1fr)!important;overflow:visible!important}
+  .dash-right{overflow:visible!important;height:auto!important;flex:none!important}
+  .dash-equity{height:200px!important;flex:none!important;padding:12px!important}
+  .dash-positions{overflow-x:auto!important;padding:12px!important}
+  .analysis-content{padding:12px!important}
+}
 </style>
 </head>
 <body>
@@ -134,13 +149,14 @@ function PageHeader({title}) {
 }
 
 // ── Equity Curve ──────────────────────────────────────────────────────────────
-function EquityCurve({data}) {
-  const [range,  setRange]  = React.useState('ALL');
-  const [hover,  setHover]  = React.useState(null); // {idx, hx, hy}
-  const [dims,   setDims]   = React.useState({w:560, h:150});
+function EquityCurve({data, trades=[], spyData=[]}) {
+  const [range,    setRange]    = React.useState('ALL');
+  const [hover,    setHover]    = React.useState(null);
+  const [tradeTip, setTradeTip] = React.useState(null);
+  const [showSpy,  setShowSpy]  = React.useState(false);
+  const [dims,     setDims]     = React.useState({w:560, h:150});
   const wrapRef = React.useRef(null);
 
-  // Re-measure whenever the panel is resized
   React.useEffect(()=>{
     if (!wrapRef.current) return;
     const ro = new ResizeObserver(entries => {
@@ -162,46 +178,100 @@ function EquityCurve({data}) {
     return filtered.length > 1 ? filtered : data;
   })();
 
-  // viewBox dimensions match container pixels 1-to-1 so mouse coords map directly
   const W = dims.w, H = dims.h;
-  const PL=42, PR=12, PT=10, PB=22;
+  const PL=42, PR=showSpy?44:12, PT=10, PB=22;
   const cw = W-PL-PR, ch = H-PT-PB;
   const vals = pts.map(d=>d.pnl);
   const minV = Math.min(0,...vals), maxV = Math.max(0,...vals);
   const rng  = maxV - minV || 1;
   const px = i => PL + (i/(pts.length-1||1))*cw;
   const py = v => PT + (1-(v-minV)/rng)*ch;
+  const zeroY = py(0);
 
   const linePts = pts.map((d,i)=>`${px(i)},${py(d.pnl)}`).join(' ');
-  const zeroY   = py(0);
   const areaPath = `M${px(0)},${py(pts[0].pnl)} `
     + pts.slice(1).map((d,i)=>`L${px(i+1)},${py(d.pnl)}`).join(' ')
     + ` L${px(pts.length-1)},${zeroY} L${px(0)},${zeroY} Z`;
 
+  // ── Drawdown shading ──────────────────────────────────────────────────────
+  const ddRects = [];
+  let peak = -Infinity, ddStart = -1;
+  pts.forEach((p,i) => {
+    if (p.pnl > peak) {
+      if (ddStart !== -1) ddRects.push({from:ddStart, to:i});
+      peak = p.pnl; ddStart = -1;
+    } else if (peak > 0 && p.pnl < peak) {
+      if (ddStart === -1) ddStart = Math.max(0, i-1);
+    }
+  });
+  if (ddStart !== -1) ddRects.push({from:ddStart, to:pts.length-1});
+
+  // ── SPY line ──────────────────────────────────────────────────────────────
+  let spyLinePts='', spyTicks=[], spyY=()=>0;
+  const ptsFrom = pts.length ? pts[0].date : '';
+  const ptsTo   = pts.length ? pts[pts.length-1].date : '';
+  if (showSpy && spyData && spyData.length && pts.length > 1) {
+    const spyF = spyData.filter(d => d.date >= ptsFrom && d.date <= ptsTo);
+    if (spyF.length > 1) {
+      const spyMin = Math.min(0,...spyF.map(d=>d.pct));
+      const spyMax = Math.max(0,...spyF.map(d=>d.pct));
+      const spyRng = spyMax - spyMin || 1;
+      spyY = pct => PT + (1-(pct-spyMin)/spyRng)*ch;
+      const t0 = new Date(pts[0].date).getTime();
+      const t1 = new Date(pts[pts.length-1].date).getTime();
+      spyLinePts = spyF.map(s=>{
+        const fr = t1===t0 ? 0 : (new Date(s.date).getTime()-t0)/(t1-t0);
+        return `${PL+fr*cw},${spyY(s.pct)}`;
+      }).join(' ');
+      spyTicks = [spyMin,(spyMin+spyMax)/2,spyMax].map(v=>({v,y:spyY(v)}));
+    }
+  }
+
+  // ── R-multiple trade dots ─────────────────────────────────────────────────
+  const EXCL = new Set(['SGOV','BOXX']);
+  const tradeDots = (trades||[])
+    .filter(t => !EXCL.has(t.symbol) && t.exit_date >= ptsFrom && t.exit_date <= ptsTo)
+    .map(t => {
+      let idx = pts.findIndex(p => p.date >= t.exit_date);
+      if (idx === -1) idx = pts.length - 1;
+      const isWin = (t.r_multiple != null ? t.r_multiple : t.pnl) > 0;
+      return {cx:px(idx), cy:py(pts[idx].pnl), trade:t, color:isWin?GREEN:RED};
+    });
+
   const yTicks = [minV, (minV+maxV)/2, maxV];
   const xIdxs  = pts.length > 2 ? [0, Math.floor((pts.length-1)/2), pts.length-1] : [0, pts.length-1];
-
   const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const fmtDate = s => { const [,m,d] = s.split('-'); return `${MONTHS[+m-1]} ${d}`; };
+  const fmtDate = s => { const [,m,d] = s.split('-'); return `${MONTHS[+m-1]} ${+d}`; };
 
   const onMouseMove = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    // check trade dots first (12px radius)
+    const nearDot = tradeDots.find(d => Math.hypot(d.cx-mx, d.cy-my) < 12);
+    if (nearDot) { setTradeTip(nearDot); setHover(null); return; }
+    setTradeTip(null);
     const idx = pts.reduce((best,_,i) =>
-      Math.abs(px(i)-mouseX) < Math.abs(px(best)-mouseX) ? i : best, 0);
-    setHover({idx, hx: mouseX, hy: py(pts[idx].pnl)});
+      Math.abs(px(i)-mx) < Math.abs(px(best)-mx) ? i : best, 0);
+    setHover({idx, hx:mx, hy:py(pts[idx].pnl)});
   };
 
-  // Clamp tooltip so it stays within the SVG area
-  const ttLeft = hover ? Math.max(4, Math.min(hover.hx - 52, W - 120)) : 0;
-  const ttTop  = hover ? Math.max(4, hover.hy - 60) : 0;
+  const ttLeft = hover ? Math.max(4, Math.min(hover.hx-52, W-120)) : 0;
+  const ttTop  = hover ? Math.max(4, hover.hy-60) : 0;
+  const dotTtLeft = tradeTip ? Math.max(4, Math.min(tradeTip.cx-60, W-160)) : 0;
+  const dotTtTop  = tradeTip ? Math.max(4, tradeTip.cy-72) : 0;
 
   return (
     <div style={{height:'100%', display:'flex', flexDirection:'column'}}>
-      {/* header */}
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6,flexShrink:0}}>
         <div style={S.hdr}>Equity Curve</div>
-        <div style={{display:'flex',gap:2}}>
+        <div style={{display:'flex',gap:2,alignItems:'center'}}>
+          <button onClick={()=>setShowSpy(!showSpy)} style={{
+            padding:'3px 8px',fontSize:9,borderRadius:4,border:'none',
+            background: showSpy ? `${YELLOW}22` : 'transparent',
+            color: showSpy ? YELLOW : '#5a6478',
+            fontFamily:'Space Mono',fontWeight:700,letterSpacing:'.04em',
+          }}>SPY</button>
           {['1M','3M','6M','ALL'].map(r=>(
             <button key={r} onClick={()=>setRange(r)} style={{
               padding:'3px 8px',fontSize:9,borderRadius:4,border:'none',
@@ -213,56 +283,102 @@ function EquityCurve({data}) {
         </div>
       </div>
 
-      {/* SVG wrapper — ResizeObserver measures this, tooltip anchors here */}
       <div ref={wrapRef} style={{flex:1, position:'relative', minHeight:0}}>
-        <svg
-          viewBox={`0 0 ${W} ${H}`}
+        <svg viewBox={`0 0 ${W} ${H}`}
           style={{width:'100%', height:'100%', display:'block', overflow:'visible'}}
           preserveAspectRatio="none"
           onMouseMove={onMouseMove}
-          onMouseLeave={()=>setHover(null)}
-        >
+          onMouseLeave={()=>{setHover(null);setTradeTip(null);}}>
           <defs>
             <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%"   stopColor="#4499ff" stopOpacity="0.25"/>
               <stop offset="100%" stopColor="#4499ff" stopOpacity="0"/>
             </linearGradient>
           </defs>
+
+          {/* grid lines */}
           {yTicks.map((v,i) => (
             <line key={i} x1={PL} y1={py(v)} x2={W-PR} y2={py(v)} stroke="rgba(255,255,255,0.04)" strokeWidth="1"/>
           ))}
+
+          {/* drawdown shading */}
+          {ddRects.map((r,i) => (
+            <rect key={i} x={px(r.from)} y={PT} width={Math.max(1,px(r.to)-px(r.from))} height={ch}
+              fill="rgba(240,91,107,0.07)"/>
+          ))}
+
+          {/* zero line */}
           <line x1={PL} y1={zeroY} x2={W-PR} y2={zeroY} stroke="rgba(255,255,255,0.15)" strokeWidth="1" strokeDasharray="4,3"/>
+
+          {/* area + equity line */}
           <path d={areaPath} fill="url(#eqGrad)"/>
           <polyline points={linePts} fill="none" stroke="#4499ff" strokeWidth="2" strokeLinejoin="round"/>
-          {/* resting last-point dot — hidden when hover is active */}
-          {!hover && <circle cx={px(pts.length-1)} cy={py(pts[pts.length-1].pnl)} r="3" fill="#4499ff"/>}
+
+          {/* SPY line */}
+          {showSpy && spyLinePts && (
+            <polyline points={spyLinePts} fill="none" stroke={YELLOW} strokeWidth="1.5" strokeDasharray="6,3" opacity="0.8"/>
+          )}
+
+          {/* R-multiple trade dots */}
+          {tradeDots.map((d,i) => (
+            <circle key={i} cx={d.cx} cy={d.cy} r="4"
+              fill={d.color} stroke="#090c10" strokeWidth="1" opacity="0.85"
+              style={{cursor:'pointer'}}/>
+          ))}
+
+          {/* resting last-point dot */}
+          {!hover && !tradeTip && <circle cx={px(pts.length-1)} cy={py(pts[pts.length-1].pnl)} r="3" fill="#4499ff"/>}
+
+          {/* left y-axis labels */}
           {yTicks.map((v,i) => (
             <text key={i} x={PL-5} y={py(v)+3} textAnchor="end" fontSize="9" fill="#5a6478" fontFamily="Space Mono">{fmt(v,0)}</text>
           ))}
+
+          {/* right SPY axis labels */}
+          {showSpy && spyTicks.map((t,i) => (
+            <text key={i} x={W-PR+5} y={t.y+3} textAnchor="start" fontSize="9" fill={YELLOW} fontFamily="Space Mono" opacity="0.8">
+              {t.v>=0?'+':''}{t.v.toFixed(1)}%
+            </text>
+          ))}
+
+          {/* x-axis date labels */}
           {xIdxs.map((idx,i) => (
             <text key={i} x={px(idx)} y={H-3} textAnchor="middle" fontSize="9" fill="#5a6478" fontFamily="Space Mono">
               {pts[idx].date.slice(5)}
             </text>
           ))}
-          {/* crosshair + hover dot */}
+
+          {/* crosshair */}
           {hover && <>
             <line x1={hover.hx} y1={PT} x2={hover.hx} y2={H-PB} stroke="rgba(255,255,255,0.3)" strokeWidth="1"/>
             <circle cx={hover.hx} cy={hover.hy} r="4" fill="#4499ff" stroke="#090c10" strokeWidth="1.5"/>
           </>}
         </svg>
 
-        {/* floating tooltip */}
+        {/* curve hover tooltip */}
         {hover && (
-          <div style={{
-            position:'absolute', left:ttLeft, top:ttTop,
-            background:'#141a24', border:'1px solid rgba(255,255,255,0.1)',
-            borderRadius:4, padding:'6px 10px',
-            fontFamily:'Space Mono', fontSize:11,
-            pointerEvents:'none', zIndex:20, whiteSpace:'nowrap',
-          }}>
-            <div style={{color:'#5a6478', marginBottom:3}}>{fmtDate(pts[hover.idx].date)}</div>
-            <div style={{color: pts[hover.idx].pnl >= 0 ? GREEN : RED, fontWeight:700}}>
-              {pts[hover.idx].pnl >= 0 ? '+' : ''}{fmt(pts[hover.idx].pnl, 2)}
+          <div style={{position:'absolute',left:ttLeft,top:ttTop,
+            background:'#141a24',border:'1px solid rgba(255,255,255,0.1)',
+            borderRadius:4,padding:'6px 10px',fontFamily:'Space Mono',fontSize:11,
+            pointerEvents:'none',zIndex:20,whiteSpace:'nowrap'}}>
+            <div style={{color:'#5a6478',marginBottom:3}}>{fmtDate(pts[hover.idx].date)}</div>
+            <div style={{color:pts[hover.idx].pnl>=0?GREEN:RED,fontWeight:700}}>
+              {pts[hover.idx].pnl>=0?'+':''}{fmt(pts[hover.idx].pnl,2)}
+            </div>
+          </div>
+        )}
+
+        {/* trade dot tooltip */}
+        {tradeTip && (
+          <div style={{position:'absolute',left:dotTtLeft,top:dotTtTop,
+            background:'#141a24',border:`1px solid ${tradeTip.color}44`,
+            borderRadius:4,padding:'6px 10px',fontFamily:'Space Mono',fontSize:11,
+            pointerEvents:'none',zIndex:20,whiteSpace:'nowrap'}}>
+            <div style={{color:'#5a6478',marginBottom:2,fontSize:9}}>{tradeTip.trade.exit_date} · {tradeTip.trade.direction}</div>
+            <div style={{color:tradeTip.color,fontWeight:700,fontSize:12}}>{tradeTip.trade.symbol}</div>
+            <div style={{color:tradeTip.color,marginTop:2}}>
+              {tradeTip.trade.pnl>=0?'+':''}{fmt(tradeTip.trade.pnl,2)}
+              {tradeTip.trade.r_multiple!=null && <span style={{marginLeft:6,opacity:.8}}>{fmt(tradeTip.trade.r_multiple,2)}R</span>}
             </div>
           </div>
         )}
@@ -316,6 +432,7 @@ function Dashboard() {
   const [metrics,   setMetrics]   = React.useState(null);
   const [currency,  setCurrency]  = React.useState('USD');
   const [loading,   setLoading]   = React.useState(true);
+  const [spyData,   setSpyData]   = React.useState([]);
   const [kpiWidth,  setKpiWidth]  = React.useState(() => parseInt(localStorage.getItem('tj_kpiWidth')  || '200'));
   const [equityPct, setEquityPct] = React.useState(() => parseFloat(localStorage.getItem('tj_equityPct') || '45'));
   const [dragging,  setDragging]  = React.useState(null); // 'v' | 'h' | null
@@ -327,6 +444,11 @@ function Dashboard() {
     setLoading(true);
     const [p, m] = await Promise.all([api('/portfolio'), api(`/metrics?currency=${ccy}`)]);
     setData(p); setMetrics(m); setLoading(false);
+    // Load SPY in background after main data
+    if (m.equity_curve && m.equity_curve.length) {
+      const from = m.equity_curve[0].date;
+      api(`/stats/spy?from_date=${from}`).then(setSpyData).catch(()=>{});
+    }
   };
   React.useEffect(()=>{ load(currency); }, [currency]);
   React.useEffect(()=>{ localStorage.setItem('tj_kpiWidth',  String(kpiWidth));  }, [kpiWidth]);
@@ -395,11 +517,14 @@ function Dashboard() {
     document.addEventListener('mouseup', onUp);
   };
 
+  const EXCL = new Set(['SGOV','BOXX']);
+  const closedForCurrency = data ? (data.closed_trades||[]).filter(t=>t.currency===currency&&!EXCL.has(t.symbol)) : [];
+
   return (
-    <div ref={containerRef} style={{flex:1,display:'flex',overflow:'hidden'}}>
+    <div ref={containerRef} className="dash-container" style={{flex:1,display:'flex',overflow:'hidden'}}>
 
       {/* ── KPI column ─────────────────────────────────────────────────────── */}
-      <div style={{width:kpiWidth,display:'flex',flexDirection:'column',flexShrink:0,overflow:'auto'}}>
+      <div className="dash-kpi" style={{width:kpiWidth,display:'flex',flexDirection:'column',flexShrink:0,overflow:'auto'}}>
         {currencies.length > 1 && (
           <div style={{padding:'14px 14px 6px',display:'flex',gap:6}}>
             {currencies.map(c=>(
@@ -424,18 +549,18 @@ function Dashboard() {
       <ResizeHandle dir="v" active={dragging==='v'} onMouseDown={startVertDrag}/>
 
       {/* ── Right panel ────────────────────────────────────────────────────── */}
-      <div ref={rightRef} style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
+      <div ref={rightRef} className="dash-right" style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
 
         {/* Equity curve — height driven by equityPct; flex column so EquityCurve fills it */}
-        <div style={{flex:`0 0 ${equityPct}%`,overflow:'hidden',padding:'16px 20px',display:'flex',flexDirection:'column'}}>
-          <EquityCurve data={metrics.equity_curve}/>
+        <div className="dash-equity" style={{flex:`0 0 ${equityPct}%`,overflow:'hidden',padding:'16px 20px',display:'flex',flexDirection:'column'}}>
+          <EquityCurve data={metrics.equity_curve} trades={closedForCurrency} spyData={spyData}/>
         </div>
 
         {/* ── Horizontal resize handle ──────────────────────────────────────── */}
         <ResizeHandle dir="h" active={dragging==='h'} onMouseDown={startHorizDrag}/>
 
         {/* Open positions */}
-        <div style={{flex:1,overflow:'auto',padding:'16px 20px'}}>
+        <div className="dash-positions" style={{flex:1,overflow:'auto',padding:'16px 20px'}}>
           <div style={{...S.hdr,marginBottom:12}}>Open Positions ({data.open_positions.length})</div>
           {data.open_positions.length === 0
             ? <div style={{color:'#5a6478',fontSize:12}}>No open positions</div>
@@ -817,25 +942,33 @@ function TradeCard({trade:t}) {
 
 // ── Analysis ──────────────────────────────────────────────────────────────────
 function Analysis() {
-  const [tab,        setTab]        = React.useState('Statistics');
-  const [stats,      setStats]      = React.useState(null);
-  const [currency,   setCurrency]   = React.useState('USD');
-  const [currencies, setCurrencies] = React.useState(['USD']);
-  const [question,   setQuestion]   = React.useState('');
-  const [prompt,     setPrompt]     = React.useState('');
-  const [generating, setGenerating] = React.useState(false);
+  const [tab,          setTab]          = React.useState('Statistics');
+  const [stats,        setStats]        = React.useState(null);
+  const [setupTags,    setSetupTags]    = React.useState(null);
+  const [maemfe,       setMaemfe]       = React.useState(null);
+  const [currency,     setCurrency]     = React.useState('USD');
+  const [currencies,   setCurrencies]   = React.useState(['USD']);
+  const [question,     setQuestion]     = React.useState('');
+  const [coachResp,    setCoachResp]    = React.useState('');
+  const [weeklyResp,   setWeeklyResp]   = React.useState('');
+  const [generating,   setGenerating]   = React.useState(false);
+  const [genWeekly,    setGenWeekly]    = React.useState(false);
 
-  React.useEffect(()=>{
-    api(`/metrics?currency=${currency}`).then(m=>setCurrencies(m.currencies||['USD']));
-    api(`/stats?currency=${currency}`).then(setStats);
-  }, [currency]);
+  const loadStats = (ccy) => {
+    api(`/metrics?currency=${ccy}`).then(m=>setCurrencies(m.currencies||['USD']));
+    api(`/stats?currency=${ccy}`).then(setStats);
+    api(`/stats/setup_tags?currency=${ccy}`).then(setSetupTags).catch(()=>setSetupTags({}));
+    api(`/stats/maemfe_analysis?currency=${ccy}`).then(setMaemfe).catch(()=>setMaemfe([]));
+  };
+
+  React.useEffect(()=>{ loadStats(currency); }, [currency]);
 
   const [focus, setFocus] = React.useState('general');
   const FOCUS_OPTS = [
     {val:'general',   label:'General'},
     {val:'psychology',label:'Psychology'},
-    {val:'entries',   label:'Entry & Exit Quality'},
-    {val:'sizing',    label:'Position Sizing'},
+    {val:'entries',   label:'Entry & Exit'},
+    {val:'sizing',    label:'Sizing'},
   ];
   const SUGGESTED = [
     'Is my stop loss too tight?',
@@ -844,26 +977,29 @@ function Analysis() {
     "What's my biggest single improvement?",
   ];
 
+  const CcyBar = () => currencies.length > 1 ? (
+    <div style={{display:'flex',gap:4,marginBottom:16}}>
+      {currencies.map(c=>(
+        <button key={c} onClick={()=>setCurrency(c)} style={{
+          padding:'4px 10px',fontSize:10,borderRadius:4,border:'none',
+          background: currency===c ? `${ACCENT}22` : 'rgba(255,255,255,0.04)',
+          color: currency===c ? ACCENT : '#5a6478',
+          fontFamily:'Space Mono',fontWeight:700,
+        }}>{c}</button>
+      ))}
+    </div>
+  ) : null;
+
   return (
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
       <div style={{padding:'0 20px',flexShrink:0}}>
-        <TabBar tabs={['Statistics','AI Coach']} active={tab} onChange={setTab}/>
+        <TabBar tabs={['Statistics','Sizing','AI Coach']} active={tab} onChange={setTab}/>
       </div>
-      <div style={{flex:1,overflow:'auto',padding:'20px'}}>
+      <div className="analysis-content" style={{flex:1,overflow:'auto',padding:'20px'}}>
+
         {tab==='Statistics' && (
           <>
-            {currencies.length > 1 && (
-              <div style={{display:'flex',gap:4,marginBottom:16}}>
-                {currencies.map(c=>(
-                  <button key={c} onClick={()=>setCurrency(c)} style={{
-                    padding:'4px 10px',fontSize:10,borderRadius:4,border:'none',
-                    background: currency===c ? `${ACCENT}22` : 'rgba(255,255,255,0.04)',
-                    color: currency===c ? ACCENT : '#5a6478',
-                    fontFamily:'Space Mono',fontWeight:700,
-                  }}>{c}</button>
-                ))}
-              </div>
-            )}
+            <CcyBar/>
             {stats && (
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
                 <StatsTable title="Long vs Short" rows={Object.entries(stats.by_direction).map(([k,v])=>({
@@ -875,13 +1011,114 @@ function Analysis() {
                 <HoldingTable rows={stats.by_holding}/>
               </div>
             )}
+
+            {/* Setup Tag Performance */}
+            {setupTags && Object.keys(setupTags).length > 0 && (
+              <div style={{marginTop:24}}>
+                <div style={{...S.hdr,marginBottom:10}}>Setup Tag Performance</div>
+                <table>
+                  <thead><tr>
+                    <th>Setup</th>
+                    <th style={{textAlign:'right'}}>Count</th>
+                    <th style={{textAlign:'right'}}>Win Rate</th>
+                    <th style={{textAlign:'right'}}>Avg R</th>
+                    <th style={{textAlign:'right'}}>Avg P&L</th>
+                    <th style={{textAlign:'right'}}>Total P&L</th>
+                  </tr></thead>
+                  <tbody>
+                    {Object.entries(setupTags).sort((a,b)=>(b[1].total_pnl||0)-(a[1].total_pnl||0)).map(([tag,v])=>(
+                      <tr key={tag}>
+                        <td style={{...S.ticker,fontSize:12}}>{tag}</td>
+                        <td style={{textAlign:'right'}}>{v.count}</td>
+                        <td style={{textAlign:'right',color:v.win_rate>=0.4?GREEN:RED}}>{pct(v.win_rate)}</td>
+                        <td style={{textAlign:'right',color:v.avg_r!=null?(v.avg_r>0?GREEN:RED):'#5a6478'}}>
+                          {v.avg_r!=null?fmt(v.avg_r,2)+'R':'—'}
+                        </td>
+                        <td style={{textAlign:'right',color:pnlColor(v.avg_pnl)}}>{v.avg_pnl>=0?'+':''}{fmt(v.avg_pnl,2)}</td>
+                        <td style={{textAlign:'right',fontWeight:700,color:pnlColor(v.total_pnl)}}>{v.total_pnl>=0?'+':''}{fmt(v.total_pnl,0)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* MAE/MFE Analysis */}
+            {maemfe && maemfe.length > 0 && (
+              <div style={{marginTop:24}}>
+                <div style={{...S.hdr,marginBottom:6}}>MAE/MFE Analysis
+                  <span style={{marginLeft:8,fontWeight:400,color:'#5a6478',textTransform:'none',fontSize:10,letterSpacing:0}}>
+                    — MFE Eff% = how much of the move you captured; &gt;70% = good exit
+                  </span>
+                </div>
+                <div style={{overflowX:'auto'}}>
+                  <table style={{minWidth:600}}>
+                    <thead><tr>
+                      <th>Symbol</th>
+                      <th>Exit</th>
+                      <th>Setup</th>
+                      <th style={{textAlign:'right'}}>R</th>
+                      <th style={{textAlign:'right'}}>MAE (R)</th>
+                      <th style={{textAlign:'right'}}>MFE (R)</th>
+                      <th style={{textAlign:'right'}}>MFE Eff%</th>
+                      <th style={{textAlign:'right'}}>P&L</th>
+                    </tr></thead>
+                    <tbody>
+                      {maemfe.map((row,i)=>(
+                        <tr key={i}>
+                          <td style={S.ticker}>{row.symbol}</td>
+                          <td>{row.exit_date}</td>
+                          <td style={{color:'#5a6478',fontSize:11}}>{row.setup_tag||'—'}</td>
+                          <td style={{textAlign:'right',color:row.r_multiple>=0?GREEN:RED}}>
+                            {row.r_multiple!=null?fmt(row.r_multiple,2)+'R':'—'}
+                          </td>
+                          <td style={{textAlign:'right',color:RED}}>{row.mae_r!=null?fmt(row.mae_r,2)+'R':'—'}</td>
+                          <td style={{textAlign:'right',color:GREEN}}>{row.mfe_r!=null?fmt(row.mfe_r,2)+'R':'—'}</td>
+                          <td style={{textAlign:'right',
+                            color:row.mfe_efficiency!=null?(row.mfe_efficiency>=70?GREEN:row.mfe_efficiency>=40?YELLOW:RED):'#5a6478'}}>
+                            {row.mfe_efficiency!=null?row.mfe_efficiency+'%':'—'}
+                          </td>
+                          <td style={{textAlign:'right',fontWeight:700,color:pnlColor(row.pnl)}}>
+                            {row.pnl>=0?'+':''}{fmt(row.pnl,2)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </>
         )}
+
+        {tab==='Sizing' && <PositionSizer/>}
+
         {tab==='AI Coach' && (
           <div style={{maxWidth:640}}>
-            <p style={{color:'#5a6478',marginBottom:20,lineHeight:1.7,fontSize:12}}>
-              Generates a coaching prompt enriched with your market data — paste into claude.ai.
-            </p>
+            {/* ── Weekly Review ── */}
+            <div style={{marginBottom:28,padding:'14px 16px',background:'rgba(68,153,255,0.04)',border:'1px solid rgba(68,153,255,0.1)',borderRadius:8}}>
+              <div style={{...S.hdr,marginBottom:10}}>Weekly Review (AI)</div>
+              <button style={S.btn(true)} onClick={async()=>{
+                setGenWeekly(true); setWeeklyResp('');
+                try {
+                  const r = await fetch(API+'/coach/weekly_review',{method:'POST'});
+                  const d = await r.json();
+                  setWeeklyResp(d.response||'');
+                } catch(e){ setWeeklyResp('Error: '+e.message); }
+                setGenWeekly(false);
+              }} disabled={genWeekly}>
+                {genWeekly ? 'Generating…' : 'Generate This Week\'s Review'}
+              </button>
+              {weeklyResp && (
+                <div style={{marginTop:12,padding:'12px',background:'#0f1318',borderRadius:6,
+                  fontSize:12,lineHeight:1.8,color:'#c8d0e0',whiteSpace:'pre-wrap',fontFamily:'Space Grotesk'}}>
+                  {weeklyResp}
+                </div>
+              )}
+            </div>
+
+            {/* ── Full Coach ── */}
+            <div style={{...S.hdr,marginBottom:10}}>Deep Performance Analysis</div>
             <div style={{marginBottom:14}}>
               <div style={S.hdr}>Focus Area</div>
               <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
@@ -912,22 +1149,87 @@ function Analysis() {
               try {
                 const r = await fetch(API+'/coach/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes:question,focus})});
                 const d = await r.json();
-                setPrompt(d.prompt||d.response);
+                setCoachResp(d.prompt||d.response);
               } catch(e){ alert('Error: '+e.message); }
               setGenerating(false);
             }} disabled={generating}>
-              {generating ? 'Generating…' : 'Generate Coaching Prompt'}
+              {generating ? 'Generating…' : 'Generate Analysis'}
             </button>
-            {prompt && (
+            {coachResp && (
               <div style={{marginTop:16}}>
-                <textarea value={prompt} readOnly rows={16} style={{resize:'vertical'}}/>
+                <div style={{padding:'12px',background:'#0f1318',borderRadius:6,
+                  fontSize:12,lineHeight:1.8,color:'#c8d0e0',whiteSpace:'pre-wrap',fontFamily:'Space Grotesk',
+                  maxHeight:400,overflowY:'auto'}}>
+                  {coachResp}
+                </div>
                 <div style={{fontSize:10,color:'#5a6478',marginTop:4,fontFamily:'Space Mono'}}>
-                  ~{Math.round(prompt.length/4).toLocaleString()} tokens · {prompt.length.toLocaleString()} chars
+                  {coachResp.length.toLocaleString()} chars
                 </div>
               </div>
             )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── Position Sizer ────────────────────────────────────────────────────────────
+function PositionSizer() {
+  const [acct,    setAcct]    = React.useState('');
+  const [riskPct, setRiskPct] = React.useState('1');
+  const [entry,   setEntry]   = React.useState('');
+  const [stop,    setStop]    = React.useState('');
+
+  const accountSize  = parseFloat(acct)    || 0;
+  const riskPctVal   = parseFloat(riskPct) || 0;
+  const entryPrice   = parseFloat(entry)   || 0;
+  const stopPrice    = parseFloat(stop)    || 0;
+
+  const riskPerShare = entryPrice > 0 && stopPrice > 0 ? Math.abs(entryPrice - stopPrice) : 0;
+  const dollarRisk   = accountSize * riskPctVal / 100;
+  const shares       = riskPerShare > 0 ? Math.floor(dollarRisk / riskPerShare) : 0;
+  const posSize      = shares * entryPrice;
+  const posPct       = accountSize > 0 ? (posSize / accountSize * 100) : 0;
+  const impliedR     = entryPrice > 0 && stopPrice > 0 ? Math.abs(entryPrice - stopPrice) : 0;
+
+  const inp = (label, val, set, placeholder) => (
+    <div style={{marginBottom:12}}>
+      <div style={S.hdr}>{label}</div>
+      <input type="number" step="any" value={val} placeholder={placeholder}
+        onChange={e=>set(e.target.value)} style={{maxWidth:200}}/>
+    </div>
+  );
+  const result = (label, val, color) => (
+    <div style={{padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
+      <div style={S.hdr}>{label}</div>
+      <div style={{...S.val,fontSize:16,color:color||'#c8d0e0'}}>{val}</div>
+    </div>
+  );
+
+  return (
+    <div style={{maxWidth:480}}>
+      <div style={{...S.hdr,fontSize:11,marginBottom:16}}>Position Size Calculator</div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:0,marginBottom:20,
+        background:'#0f1318',border:'1px solid rgba(255,255,255,0.06)',borderRadius:8,overflow:'hidden'}}>
+        <div style={{padding:'14px',borderRight:'1px solid rgba(255,255,255,0.06)'}}>
+          {inp('Account Size', acct, setAcct, '100000')}
+          {inp('Risk per Trade (%)', riskPct, setRiskPct, '1')}
+          {inp('Entry Price', entry, setEntry, '150.00')}
+          {inp('Stop Loss Price', stop, setStop, '145.00')}
+        </div>
+        <div>
+          {result('Shares to Buy', shares > 0 ? fmt(shares,0) : '—', shares>0?'#c8d0e0':'#5a6478')}
+          {result('Dollar at Risk', dollarRisk > 0 ? '$'+fmt(dollarRisk,2) : '—', RED)}
+          {result('Position Size', posSize > 0 ? '$'+fmt(posSize,2) : '—')}
+          {result('% of Account', posPct > 0 ? posPct.toFixed(1)+'%' : '—',
+            posPct > 20 ? RED : posPct > 10 ? YELLOW : posPct > 0 ? GREEN : '#5a6478')}
+          {result('Risk per Share', riskPerShare > 0 ? '$'+riskPerShare.toFixed(4) : '—')}
+        </div>
+      </div>
+      <div style={{fontSize:11,color:'#5a6478',fontFamily:'Space Mono',lineHeight:1.7}}>
+        Shares = (Account × Risk%) ÷ |Entry − Stop|<br/>
+        {posPct > 20 && <span style={{color:RED}}>⚠ Position &gt;20% of account — consider reducing size</span>}
       </div>
     </div>
   );
@@ -1248,15 +1550,27 @@ function Spinner() {
 function App() {
   const [nav, setNav] = React.useState('dashboard');
   const titles = {dashboard:'Dashboard',journal:'Journal',analysis:'Analysis',data:'Data Management'};
+  const NAV_ITEMS = [{id:'dashboard',label:'Dash'},{id:'journal',label:'Journal'},{id:'analysis',label:'Analysis'},{id:'data',label:'Data'}];
   return (
-    <div style={{display:'flex',height:'100vh',overflow:'hidden'}}>
-      <Sidebar active={nav} onNav={setNav}/>
-      <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
+    <div className="app-root" style={{display:'flex',height:'100vh',overflow:'hidden'}}>
+      <div className="app-sidebar"><Sidebar active={nav} onNav={setNav}/></div>
+      <div className="app-main" style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
         <PageHeader title={titles[nav]}/>
         {nav==='dashboard' && <Dashboard/>}
         {nav==='journal'   && <Journal/>}
         {nav==='analysis'  && <Analysis/>}
         {nav==='data'      && <DataPage/>}
+      </div>
+      {/* Mobile bottom nav */}
+      <div className="mobile-nav">
+        {NAV_ITEMS.map(n=>(
+          <button key={n.id} onClick={()=>setNav(n.id)} style={{
+            flex:1,background:'transparent',border:'none',
+            color:nav===n.id?ACCENT:'#5a6478',
+            fontSize:9,fontFamily:'Space Grotesk',fontWeight:600,letterSpacing:'.06em',
+            textTransform:'uppercase',padding:'8px 4px',borderTop:nav===n.id?`2px solid ${ACCENT}`:'2px solid transparent',
+          }}>{n.label}</button>
+        ))}
       </div>
     </div>
   );

@@ -543,6 +543,170 @@ Respond with 4–6 specific, data-driven insights. Reference actual numbers and 
         return {"response": f"AI coach unavailable: {e}\n\nPrompt sent:\n\n{prompt}"}
 
 
+# ── SPY benchmark ─────────────────────────────────────────────────────────────
+
+_spy_cache: list = []
+_spy_cache_ts: float = 0.0
+_SPY_TTL = 3600  # 1-hour cache for historical data
+
+def _fetch_spy(from_date: str) -> list[dict]:
+    global _spy_cache, _spy_cache_ts
+    now = _time.time()
+    if _spy_cache and now - _spy_cache_ts < _SPY_TTL:
+        return [p for p in _spy_cache if p["date"] >= from_date]
+    try:
+        import yfinance as yf
+        spy = yf.Ticker("SPY").history(start=from_date, period="max", auto_adjust=True)
+        if spy.empty:
+            return []
+        base = float(spy["Close"].iloc[0])
+        _spy_cache = [
+            {"date": str(d.date()), "pct": round((float(c) / base - 1) * 100, 2)}
+            for d, c in zip(spy.index, spy["Close"])
+        ]
+        _spy_cache_ts = now
+        return _spy_cache
+    except Exception:
+        return []
+
+
+@app.get("/api/stats/spy")
+def get_spy(from_date: str = None):
+    if not from_date:
+        from datetime import timedelta
+        from_date = str(date.today() - timedelta(days=730))
+    return _fetch_spy(from_date)
+
+
+# ── Setup tag performance ─────────────────────────────────────────────────────
+
+@app.get("/api/stats/setup_tags")
+def get_setup_tag_stats(currency: str = "USD"):
+    from collections import defaultdict
+    _, closed = build_portfolio()
+    filtered = [t for t in closed if t.currency == currency and t.symbol not in EXCLUDED_SYMBOLS]
+    trade_lookup = {(t.symbol, str(t.entry_date)): t for t in filtered}
+
+    reviews = get_supabase().table("trade_reviews").select("symbol,entry_date,setup_tag").execute().data
+
+    tag_trades: dict[str, list] = defaultdict(list)
+    for rev in reviews:
+        tag = rev.get("setup_tag")
+        if not tag:
+            continue
+        trade = trade_lookup.get((rev["symbol"], rev["entry_date"]))
+        if trade:
+            tag_trades[tag].append(trade)
+
+    result = {}
+    for tag, trades in tag_trades.items():
+        winners = [t for t in trades if t.realized_pnl > 0]
+        r_trades = [t for t in trades if t.r_multiple is not None]
+        result[tag] = {
+            "count": len(trades),
+            "win_rate": round(len(winners) / len(trades), 4),
+            "avg_r": round(sum(t.r_multiple for t in r_trades) / len(r_trades), 2) if r_trades else None,
+            "total_pnl": round(sum(t.realized_pnl for t in trades), 2),
+            "avg_pnl": round(sum(t.realized_pnl for t in trades) / len(trades), 2),
+        }
+    return result
+
+
+# ── MAE/MFE aggregate analysis ────────────────────────────────────────────────
+
+@app.get("/api/stats/maemfe_analysis")
+def get_maemfe_analysis(currency: str = "USD"):
+    _, closed = build_portfolio()
+    filtered = [t for t in closed if t.currency == currency and t.symbol not in EXCLUDED_SYMBOLS]
+    trade_lookup = {(t.symbol, str(t.entry_date)): t for t in filtered}
+
+    reviews = get_supabase().table("trade_reviews").select("*").execute().data
+
+    result = []
+    for rev in reviews:
+        mae = rev.get("mae")
+        mfe = rev.get("mfe")
+        if mae is None or mfe is None:
+            continue
+        trade = trade_lookup.get((rev["symbol"], rev["entry_date"]))
+        if not trade:
+            continue
+
+        mae_f, mfe_f = float(mae), float(mfe)
+        pps = trade.realized_pnl / trade.quantity if trade.quantity else 0
+        risk = abs(trade.avg_entry - trade.initial_stop) if trade.initial_stop else None
+
+        result.append({
+            "symbol": trade.symbol,
+            "entry_date": str(trade.entry_date),
+            "exit_date": str(trade.exit_date),
+            "setup_tag": rev.get("setup_tag"),
+            "direction": trade.direction,
+            "mae": mae_f,
+            "mfe": mfe_f,
+            "actual_pps": round(pps, 4),
+            "mfe_efficiency": round(pps / mfe_f * 100, 1) if mfe_f > 0 else None,
+            "mae_r": round(mae_f / risk, 2) if risk and risk > 0 else None,
+            "mfe_r": round(mfe_f / risk, 2) if risk and risk > 0 else None,
+            "r_multiple": trade.r_multiple,
+            "pnl": round(trade.realized_pnl, 2),
+        })
+
+    return sorted(result, key=lambda x: x["exit_date"], reverse=True)
+
+
+# ── Weekly review ─────────────────────────────────────────────────────────────
+
+@app.post("/api/coach/weekly_review")
+def generate_weekly_review():
+    from datetime import timedelta
+    _, closed_all = build_portfolio()
+    closed = [t for t in closed_all if t.symbol not in EXCLUDED_SYMBOLS]
+
+    today = date.today()
+    week_start = today - timedelta(days=7)
+    week_trades = [t for t in closed if t.exit_date >= week_start]
+
+    if not week_trades:
+        return {"response": "No trades closed in the past 7 days — nothing to review."}
+
+    m = summary_dict(week_trades)
+    trade_lines = "\n".join(
+        f"  {t.symbol}({t.currency}) {t.direction} | exit={t.exit_date}"
+        f" | pnl={t.realized_pnl:.2f}{t.currency}"
+        f" | R={f'{t.r_multiple:.2f}' if t.r_multiple is not None else 'N/A'}"
+        for t in sorted(week_trades, key=lambda t: t.exit_date)
+    )
+
+    prompt = f"""You are a professional trading coach reviewing a trader's week.
+
+=== THIS WEEK ({week_start} to {today}) ===
+Trades: {m['total_trades']} | Win rate: {m['win_rate']:.1%} | Profit factor: {m['profit_factor']:.2f}
+Avg win: {m['avg_win']:.2f} | Avg loss: {m['avg_loss']:.2f} | Expectancy: {(m.get('expectancy_r') or 0):.2f}R
+
+{trade_lines}
+
+Write a concise weekly review with these 4 sections:
+1. What worked well (specific trades/patterns, reference actual numbers)
+2. What didn't work (specific trades/mistakes)
+3. Key execution observation for this week
+4. One concrete focus for next week
+
+Keep each point to 2-3 sentences. Be specific and direct."""
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic()
+        message = client.messages.create(
+            model="claude-opus-4-7",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return {"response": message.content[0].text}
+    except Exception as e:
+        return {"response": f"AI unavailable: {e}"}
+
+
 # ── Static frontend ───────────────────────────────────────────────────────────
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
