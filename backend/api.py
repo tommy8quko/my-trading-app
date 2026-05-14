@@ -17,6 +17,9 @@ from ingestion.review_queue import fetch_pending, approve_item, reject_item
 from ingestion.pipeline import ingest_file
 from db.client import get_supabase
 
+# Symbols excluded from all metrics/coach (cash-parking instruments, not trades)
+EXCLUDED_SYMBOLS = {"SGOV", "BOXX"}
+
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -152,7 +155,7 @@ def get_portfolio():
 @app.get("/api/metrics")
 def get_metrics(currency: str = "USD"):
     open_pos, closed = build_portfolio()
-    filtered = [t for t in closed if t.currency == currency]
+    filtered = [t for t in closed if t.currency == currency and t.symbol not in EXCLUDED_SYMBOLS]
     m = summary_dict(filtered) if filtered else {}
     pending = len(fetch_pending(limit=200))
     open_filtered = [p for p in open_pos if p.currency == currency]
@@ -184,7 +187,7 @@ def get_metrics(currency: str = "USD"):
 @app.get("/api/stats")
 def get_stats(currency: str = "USD"):
     _, closed = build_portfolio()
-    filtered = [t for t in closed if t.currency == currency]
+    filtered = [t for t in closed if t.currency == currency and t.symbol not in EXCLUDED_SYMBOLS]
     return {
         "by_direction": breakdown_by_direction(filtered),
         "by_dow": breakdown_by_dow(filtered),
@@ -453,7 +456,8 @@ class CoachRequest(BaseModel):
 
 @app.post("/api/coach/generate")
 def generate_coach(req: CoachRequest):
-    _, closed = build_portfolio()
+    _, closed_all = build_portfolio()
+    closed = [t for t in closed_all if t.symbol not in EXCLUDED_SYMBOLS]
     m = summary_dict(closed) if closed else {}
     if not closed:
         return {"response": "No closed trades yet — nothing to analyse."}
