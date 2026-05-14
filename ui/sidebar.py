@@ -4,20 +4,12 @@ import streamlit as st
 
 
 def render_sidebar() -> str:
-    """Render sidebar nav; return selected page name."""
     with st.sidebar:
         st.title("Trading Journal")
         st.divider()
         page = st.radio(
             "Navigate",
-            options=[
-                "Performance",
-                "Positions",
-                "Trade Replay",
-                "AI Coach",
-                "Review Queue",
-                "Data Management",
-            ],
+            options=["Dashboard", "Journal", "Analysis", "Data"],
             label_visibility="collapsed",
         )
         st.divider()

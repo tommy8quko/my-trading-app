@@ -11,18 +11,14 @@ st.set_page_config(
 
 page = render_sidebar()
 
-if page == "Performance":
-    from ui.pages.performance import render
-elif page == "Positions":
-    from ui.pages.positions import render
-elif page == "Trade Replay":
-    from ui.pages.trade_replay import render
-elif page == "AI Coach":
-    from ui.pages.ai_coach import render
-elif page == "Review Queue":
-    from ui.pages.review_queue import render
-elif page == "Data Management":
-    from ui.pages.data_mgmt import render
+if page == "Dashboard":
+    from ui.pages.dashboard import render
+elif page == "Journal":
+    from ui.pages.journal import render
+elif page == "Analysis":
+    from ui.pages.analysis import render
+elif page == "Data":
+    from ui.pages.data import render
 else:
     def render():
         st.write("Page not found")

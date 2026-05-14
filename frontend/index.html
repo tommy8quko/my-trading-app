@@ -207,15 +207,14 @@ function PanelC({trades}) {
   const [hoveredIndex, setHoveredIndex] = React.useState(null);
   if (!trades||!trades.length) return <div style={{flex:1}}/>;
   const recent=[...trades].sort((a,b)=>b.exit_date.localeCompare(a.exit_date)).slice(0,10);
-  const absVals=recent.map(t=>Math.abs(t.pnl)).sort((a,b)=>a-b);
-  const p80=absVals[Math.floor(absVals.length*0.8)]||1;
-  const scaleMax=p80*1.2||1;
+  const maxAbs=Math.max(...recent.map(t=>Math.abs(t.pnl)),1);
+  const logMax=Math.log(maxAbs+1);
   return (
     <div style={{flex:1,overflow:'hidden',padding:'10px 12px',display:'flex',flexDirection:'column',minHeight:0}}>
       <div style={{...S.hdr,marginBottom:8}}>Recent 10 Trades</div>
-      <div style={{flex:1,overflow:'auto'}}>
+      <div style={{flex:1,overflowY:'auto',overflowX:'hidden'}}>
         {recent.map((t,i)=>{
-          const barPct=Math.min(1,Math.abs(t.pnl)/scaleMax), isPos=t.pnl>=0;
+          const barPct=(logMax>0?Math.log(Math.abs(t.pnl)+1)/logMax:0)*0.85, isPos=t.pnl>=0;
           const isHovered=hoveredIndex===i;
           const pnlLabel=(t.pnl>=0?'+':'')+fmt(t.pnl,0);
           return (
