@@ -206,7 +206,7 @@ function PanelB({metrics}) {
 function PanelC({trades}) {
   const [hoveredIndex, setHoveredIndex] = React.useState(null);
   if (!trades||!trades.length) return <div style={{flex:1}}/>;
-  const recent=[...trades].sort((a,b)=>b.exit_date.localeCompare(a.exit_date)).slice(0,10);
+  const recent=trades.slice(0,10);
   const maxAbs=Math.max(...recent.map(t=>Math.abs(t.pnl)),1);
   const sqrtMax=Math.sqrt(maxAbs);
   return (

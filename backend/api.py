@@ -148,7 +148,7 @@ def get_portfolio():
                 "r_multiple":   round(t.r_multiple, 2) if t.r_multiple is not None else None,
                 "initial_stop": t.initial_stop,
             }
-            for t in sorted(closed, key=lambda x: x.exit_date, reverse=True)
+            for t in sorted(closed, key=lambda x: (x.exit_date, x.symbol), reverse=True)
         ],
     }
 
