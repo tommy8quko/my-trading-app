@@ -467,12 +467,25 @@ function Dashboard() {
   );
 }
 
-// ── Position row with expandable lots + inline stop-loss edit ─────────────────
+// ── Position row with expandable lots + inline stop-loss edit + trade review ───
 function PositionRow({p, onRefresh}) {
-  const [open, setOpen] = React.useState(false);
-  const [slVals, setSlVals] = React.useState({});
-  const [saving, setSaving] = React.useState({});
-  const [errs, setErrs] = React.useState({});
+  const [open,       setOpen]       = React.useState(false);
+  const [slVals,     setSlVals]     = React.useState({});
+  const [saving,     setSaving]     = React.useState({});
+  const [errs,       setErrs]       = React.useState({});
+  const [review,     setReview]     = React.useState(null);
+  const [form,       setForm]       = React.useState({});
+  const [savingRev,  setSavingRev]  = React.useState(false);
+  const [saveMsg,    setSaveMsg]    = React.useState('');
+
+  const entryDate = p.entry_date || (p.lots?.[0]?.date ?? '');
+
+  React.useEffect(()=>{
+    if (!open || review !== null || !entryDate) return;
+    api(`/trades/review?symbol=${encodeURIComponent(p.symbol)}&entry_date=${entryDate}`)
+      .then(d=>{ setReview(d); setForm(d); })
+      .catch(()=>{ setReview({}); setForm({}); });
+  }, [open]);
 
   const saveSL = async (lotOrderId) => {
     setSaving(s=>({...s,[lotOrderId]:true})); setErrs(e=>({...e,[lotOrderId]:''}));
@@ -487,8 +500,27 @@ function PositionRow({p, onRefresh}) {
     setSaving(s=>({...s,[lotOrderId]:false}));
   };
 
+  const saveReview = async () => {
+    setSavingRev(true); setSaveMsg('');
+    try {
+      await api('/trades/review', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({symbol:p.symbol, entry_date:entryDate, ...form})});
+      setReview({...form}); setSaveMsg('Saved');
+      setTimeout(()=>setSaveMsg(''), 2000);
+    } catch(e) { setSaveMsg('Error: '+e.message); }
+    setSavingRev(false);
+  };
+
   const inputSt = {width:90,padding:'3px 6px',background:'#0a0d12',border:'1px solid rgba(255,255,255,0.12)',
     borderRadius:4,color:'#c8d0e0',fontSize:11,fontFamily:'Space Mono',outline:'none'};
+  const selSt = {padding:'4px 6px',background:'#0a0d12',border:'1px solid rgba(255,255,255,0.12)',
+    borderRadius:4,color:'#c8d0e0',fontSize:11,fontFamily:'Space Mono',width:'100%'};
+
+  const sel = (key, opts) => (
+    <select value={form[key]||''} onChange={e=>setForm(f=>({...f,[key]:e.target.value||null}))} style={selSt}>
+      {opts.map(o=><option key={o} value={o}>{o||'— select —'}</option>)}
+    </select>
+  );
 
   return (
     <>
@@ -506,32 +538,63 @@ function PositionRow({p, onRefresh}) {
           {p.pct_return!=null ? (p.pct_return>=0?'+':'')+p.pct_return.toFixed(2)+'%' : '—'}
         </td>
       </tr>
-      {open && (p.lots||[]).map(lot=>(
-        <tr key={lot.order_id} style={{background:'rgba(255,255,255,0.02)'}}>
-          <td style={{paddingLeft:20,color:'#5a6478',fontSize:10,fontFamily:'Space Mono'}}>{lot.date}</td>
-          <td style={{color:'#5a6478',fontSize:10,textTransform:'uppercase'}}>{lot.action}</td>
-          <td/>
-          <td style={{textAlign:'right',color:'#5a6478',fontSize:11,fontFamily:'Space Mono'}}>{fmt(lot.quantity)}</td>
-          <td style={{textAlign:'right',color:'#5a6478',fontSize:11,fontFamily:'Space Mono'}}>{fmt(lot.entry_price,4)}</td>
-          <td style={{textAlign:'right'}}>
-            <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:4}}>
-              <input type="number" step="any"
-                placeholder={lot.stop_loss ? fmt(lot.stop_loss,4) : 'set stop'}
-                value={slVals[lot.order_id] ?? (lot.stop_loss||'')}
-                onChange={e=>setSlVals(s=>({...s,[lot.order_id]:e.target.value}))}
-                style={inputSt}
-              />
-              <button onClick={e=>{e.stopPropagation();saveSL(lot.order_id);}}
-                disabled={saving[lot.order_id]}
-                style={{...S.btn(true),padding:'3px 8px',fontSize:10}}>
-                {saving[lot.order_id]?'…':'Save'}
+
+      {open && <>
+        {/* Lot rows with stop loss */}
+        {(p.lots||[]).map(lot=>(
+          <tr key={lot.order_id} style={{background:'rgba(255,255,255,0.02)'}}>
+            <td style={{paddingLeft:20,color:'#5a6478',fontSize:10,fontFamily:'Space Mono'}}>{lot.date}</td>
+            <td style={{color:'#5a6478',fontSize:10,textTransform:'uppercase'}}>{lot.action}</td>
+            <td/>
+            <td style={{textAlign:'right',color:'#5a6478',fontSize:11,fontFamily:'Space Mono'}}>{fmt(lot.quantity)}</td>
+            <td style={{textAlign:'right',color:'#5a6478',fontSize:11,fontFamily:'Space Mono'}}>{fmt(lot.entry_price,4)}</td>
+            <td style={{textAlign:'right'}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:4}}>
+                <input type="number" step="any"
+                  placeholder={lot.stop_loss ? fmt(lot.stop_loss,4) : 'set stop'}
+                  value={slVals[lot.order_id] ?? (lot.stop_loss||'')}
+                  onChange={e=>setSlVals(s=>({...s,[lot.order_id]:e.target.value}))}
+                  style={inputSt}
+                />
+                <button onClick={e=>{e.stopPropagation();saveSL(lot.order_id);}}
+                  disabled={saving[lot.order_id]}
+                  style={{...S.btn(true),padding:'3px 8px',fontSize:10}}>
+                  {saving[lot.order_id]?'…':'Save'}
+                </button>
+                {errs[lot.order_id] && <span style={{fontSize:10,color:RED}}>{errs[lot.order_id]}</span>}
+              </div>
+            </td>
+            <td colSpan={2}/>
+          </tr>
+        ))}
+
+        {/* Trade review form */}
+        <tr style={{background:'rgba(255,255,255,0.01)'}}>
+          <td colSpan={8} style={{padding:'12px 20px',borderTop:'1px solid rgba(255,255,255,0.04)'}}>
+            <div style={{...S.hdr,marginBottom:10}}>Trade Review</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:10}}>
+              <div><div style={S.hdr}>Setup / Pattern</div>{sel('setup_tag', SETUP_TAGS)}</div>
+              <div><div style={S.hdr}>Market Condition</div>{sel('market_condition', MARKET_CONDS)}</div>
+              <div style={{gridColumn:'1/-1'}}>
+                <div style={S.hdr}>Emotional Notes / Mistakes</div>
+                <textarea rows={2} value={form.emotional_notes||''} style={{
+                  resize:'vertical',width:'100%',padding:'6px 8px',background:'#0a0d12',
+                  border:'1px solid rgba(255,255,255,0.12)',borderRadius:4,color:'#c8d0e0',
+                  fontSize:11,fontFamily:'Space Mono',boxSizing:'border-box'}}
+                  onChange={e=>setForm(f=>({...f,emotional_notes:e.target.value||null}))}
+                  placeholder="What's your thesis? Any concerns or deviations from plan?"/>
+              </div>
+            </div>
+            <div style={{display:'flex',gap:8,alignItems:'center'}}>
+              <button style={{...S.btn(true),padding:'4px 10px',fontSize:11}}
+                onClick={e=>{e.stopPropagation();saveReview();}} disabled={savingRev}>
+                {savingRev?'Saving…':'Save Review'}
               </button>
-              {errs[lot.order_id] && <span style={{fontSize:10,color:RED}}>{errs[lot.order_id]}</span>}
+              {saveMsg && <span style={{fontSize:11,fontFamily:'Space Mono',color:saveMsg.startsWith('Error')?RED:GREEN}}>{saveMsg}</span>}
             </div>
           </td>
-          <td colSpan={2}/>
         </tr>
-      ))}
+      </>}
     </>
   );
 }
