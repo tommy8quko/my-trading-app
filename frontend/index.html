@@ -618,20 +618,16 @@ function Dashboard() {
   return (
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
 
-      {/* ── Metric Strip ─────────────────────────────────────────────────── */}
-      <MetricStrip metrics={metrics} currency={displayCcy}/>
-
       {/* ── 3-column top section ─────────────────────────────────────────── */}
       <div className="dash-top" style={{flex:3,display:'flex',overflow:'hidden',minHeight:0}}>
 
-        {/* KPI column */}
+        {/* KPI column — full height, no metric strip above */}
         <div className="dash-kpi" style={{width:180,display:'flex',flexDirection:'column',flexShrink:0,overflow:'auto',borderRight:'1px solid rgba(255,255,255,0.06)'}}>
           {currencies.length > 1 && (
             <div style={{padding:'10px 12px 4px',display:'flex',gap:6}}>
               {currencies.map(c=>(
                 <button key={c} onClick={()=>{
                   setCurrency(c);
-                  // If not cached yet (background fetch failed or still in-flight), fetch on-demand
                   if (!metricsCache[c]) {
                     api(`/metrics?currency=${c}`)
                       .then(m => setMetricsCache(prev => ({...prev, [c]: m})))
@@ -654,21 +650,32 @@ function Dashboard() {
           ))}
         </div>
 
-        {/* Middle: equity curve + holding chart */}
-        <div className="dash-mid" style={{flex:52,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0,borderRight:'1px solid rgba(255,255,255,0.06)'}}>
-          <div className="dash-equity" style={{flex:3,overflow:'hidden',padding:'14px 18px',display:'flex',flexDirection:'column',minHeight:0}}>
-            <EquityCurve data={metrics.equity_curve} trades={closedForCurrency} spyData={spyData}/>
-          </div>
-          <div style={{flex:2,borderTop:'1px solid rgba(255,255,255,0.06)',minHeight:0}}>
-            <HoldingBarChart trades={closedForCurrency}/>
-          </div>
-        </div>
+        {/* Right side: metric strip + middle + panels */}
+        <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
 
-        {/* Right: Panel A + B + C */}
-        <div style={{flex:48,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:140}}>
-          <PanelA metrics={metrics}/>
-          <PanelB metrics={metrics}/>
-          <PanelC trades={closedForCurrency}/>
+          {/* Metric strip aligned with equity curve */}
+          <MetricStrip metrics={metrics} currency={displayCcy}/>
+
+          {/* Middle + right panels */}
+          <div style={{flex:1,display:'flex',overflow:'hidden',minHeight:0}}>
+
+            {/* Middle: equity curve + holding chart */}
+            <div className="dash-mid" style={{flex:52,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0,borderRight:'1px solid rgba(255,255,255,0.06)'}}>
+              <div className="dash-equity" style={{flex:3,overflow:'hidden',padding:'14px 18px',display:'flex',flexDirection:'column',minHeight:0}}>
+                <EquityCurve data={metrics.equity_curve} trades={closedForCurrency} spyData={spyData}/>
+              </div>
+              <div style={{flex:2,borderTop:'1px solid rgba(255,255,255,0.06)',minHeight:0}}>
+                <HoldingBarChart trades={closedForCurrency}/>
+              </div>
+            </div>
+
+            {/* Right: Panel A + B + C */}
+            <div style={{flex:48,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:140}}>
+              <PanelA metrics={metrics}/>
+              <PanelB metrics={metrics}/>
+              <PanelC trades={closedForCurrency}/>
+            </div>
+          </div>
         </div>
       </div>
 
