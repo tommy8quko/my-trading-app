@@ -212,8 +212,50 @@ def breakdown_by_holding_period(trades: list[ClosedTrade]) -> dict[str, Any]:
     }
 
 
+def current_streak(trades: list[ClosedTrade]) -> dict[str, Any]:
+    """Return {'count': N, 'type': 'W'|'L'} for the most recent consecutive run."""
+    if not trades:
+        return {"count": 0, "type": None}
+    sorted_trades = sorted(trades, key=lambda t: t.exit_date)
+    last_type = "W" if sorted_trades[-1].realized_pnl > 0 else "L"
+    count = 0
+    for t in reversed(sorted_trades):
+        t_type = "W" if t.realized_pnl > 0 else "L"
+        if t_type == last_type:
+            count += 1
+        else:
+            break
+    return {"count": count, "type": last_type}
+
+
+def longest_win_streak(trades: list[ClosedTrade]) -> int:
+    best, cur = 0, 0
+    for t in sorted(trades, key=lambda t: t.exit_date):
+        if t.realized_pnl > 0:
+            cur += 1
+            best = max(best, cur)
+        else:
+            cur = 0
+    return best
+
+
+def longest_loss_streak(trades: list[ClosedTrade]) -> int:
+    best, cur = 0, 0
+    for t in sorted(trades, key=lambda t: t.exit_date):
+        if t.realized_pnl <= 0:
+            cur += 1
+            best = max(best, cur)
+        else:
+            cur = 0
+    return best
+
+
 def summary_dict(trades: list[ClosedTrade]) -> dict[str, Any]:
     """All key metrics in one dict for easy display."""
+    winners = [t for t in trades if t.realized_pnl > 0]
+    losers  = [t for t in trades if t.realized_pnl <= 0]
+    avg_hold_w = (sum((t.exit_date - t.entry_date).days for t in winners) / len(winners)) if winners else 0
+    avg_hold_l = (sum((t.exit_date - t.entry_date).days for t in losers)  / len(losers))  if losers  else 0
     return {
         "total_trades": len(trades),
         "win_rate": win_rate(trades),
@@ -225,4 +267,9 @@ def summary_dict(trades: list[ClosedTrade]) -> dict[str, Any]:
         "total_pnl": sum(t.realized_pnl for t in trades),
         "avg_holding_days": avg_holding_days(trades),
         "max_drawdown": max_drawdown(trades),
+        "current_streak": current_streak(trades),
+        "longest_win_streak": longest_win_streak(trades),
+        "longest_loss_streak": longest_loss_streak(trades),
+        "avg_hold_winners": round(avg_hold_w, 1),
+        "avg_hold_losers":  round(avg_hold_l, 1),
     }

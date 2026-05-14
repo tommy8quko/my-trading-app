@@ -124,17 +124,22 @@ def get_portfolio():
         ],
         "closed_trades": [
             {
-                "symbol": t.symbol,
-                "currency": t.currency,
-                "direction": t.direction,
-                "entry_date": str(t.entry_date),
-                "exit_date": str(t.exit_date),
-                "quantity": t.quantity,
-                "avg_entry": t.avg_entry,
-                "avg_exit": t.avg_exit,
-                "fees": round(t.fees, 2),
-                "pnl": round(t.realized_pnl, 2),
-                "r_multiple": round(t.r_multiple, 2) if t.r_multiple is not None else None,
+                "symbol":       t.symbol,
+                "exchange":     t.exchange,
+                "currency":     t.currency,
+                "direction":    t.direction,
+                "entry_date":   str(t.entry_date),
+                "exit_date":    str(t.exit_date),
+                "quantity":     t.quantity,
+                "avg_entry":    t.avg_entry,
+                "avg_exit":     t.avg_exit,
+                "fees":         round(t.fees, 2),
+                "pnl":          round(t.realized_pnl, 2),
+                "pct_return":   round(
+                    ((t.avg_exit - t.avg_entry) / t.avg_entry * 100) if t.direction == "LONG"
+                    else ((t.avg_entry - t.avg_exit) / t.avg_entry * 100), 2
+                ) if t.avg_entry else None,
+                "r_multiple":   round(t.r_multiple, 2) if t.r_multiple is not None else None,
                 "initial_stop": t.initial_stop,
             }
             for t in sorted(closed, key=lambda x: x.exit_date, reverse=True)
@@ -154,18 +159,23 @@ def get_metrics(currency: str = "USD"):
     prices = _fetch_prices([(p.symbol, p.exchange) for p in open_filtered]) if open_filtered else {}
     cum = equity_curve_full(filtered, open_filtered, prices)
     return {
-        "total_pnl": round(m.get("total_pnl", 0), 2),
-        "win_rate": round(m.get("win_rate", 0), 4),
-        "profit_factor": round(m.get("profit_factor", 0), 2),
-        "expectancy_r": round(m.get("expectancy_r") or 0, 2),
-        "rr_ratio": round(m.get("rr_ratio"), 2) if m.get("rr_ratio") is not None else None,
-        "avg_win": round(m.get("avg_win", 0), 2),
-        "avg_loss": round(m.get("avg_loss", 0), 2),
-        "max_drawdown": round(m.get("max_drawdown", 0), 2),
-        "total_trades": m.get("total_trades", 0),
-        "pending_review": pending,
-        "equity_curve": [{"date": str(d), "pnl": round(v, 2)} for d, v in cum],
-        "currencies": sorted({t.currency for t in closed}) if closed else ["USD"],
+        "total_pnl":           round(m.get("total_pnl", 0), 2),
+        "win_rate":            round(m.get("win_rate", 0), 4),
+        "profit_factor":       round(m.get("profit_factor", 0), 2),
+        "expectancy_r":        round(m.get("expectancy_r") or 0, 2),
+        "rr_ratio":            round(m.get("rr_ratio"), 2) if m.get("rr_ratio") is not None else None,
+        "avg_win":             round(m.get("avg_win", 0), 2),
+        "avg_loss":            round(m.get("avg_loss", 0), 2),
+        "max_drawdown":        round(m.get("max_drawdown", 0), 2),
+        "total_trades":        m.get("total_trades", 0),
+        "pending_review":      pending,
+        "current_streak":      m.get("current_streak", {"count": 0, "type": None}),
+        "longest_win_streak":  m.get("longest_win_streak", 0),
+        "longest_loss_streak": m.get("longest_loss_streak", 0),
+        "avg_hold_winners":    m.get("avg_hold_winners", 0),
+        "avg_hold_losers":     m.get("avg_hold_losers", 0),
+        "equity_curve":        [{"date": str(d), "pnl": round(v, 2)} for d, v in cum],
+        "currencies":          sorted({t.currency for t in closed}) if closed else ["USD"],
     }
 
 
@@ -379,41 +389,148 @@ def get_chief_email_diagnostic(since: str = None):
     return results
 
 
+# ── Trade Reviews (tags, notes, MAE/MFE) ─────────────────────────────────────
+
+class TradeReviewBody(BaseModel):
+    symbol: str
+    entry_date: str
+    setup_tag: str | None = None
+    outcome_reason: str | None = None
+    market_condition: str | None = None
+    emotional_notes: str | None = None
+    mae: float | None = None
+    mfe: float | None = None
+
+@app.get("/api/trades/review")
+def get_trade_review(symbol: str, entry_date: str):
+    result = get_supabase().table("trade_reviews").select("*") \
+        .eq("symbol", symbol).eq("entry_date", entry_date).execute()
+    return result.data[0] if result.data else {}
+
+@app.post("/api/trades/review")
+def save_trade_review(body: TradeReviewBody):
+    row = {k: v for k, v in body.model_dump().items() if v is not None}
+    get_supabase().table("trade_reviews").upsert(
+        row, on_conflict="symbol,entry_date"
+    ).execute()
+    return {"ok": True}
+
+@app.get("/api/trades/maemfe")
+def get_maemfe(symbol: str, exchange: str, entry_date: str, exit_date: str,
+               direction: str, entry_price: float):
+    try:
+        import yfinance as yf
+        ticker = _symbol_to_yf_ticker(symbol, exchange)
+        hist = yf.Ticker(ticker).history(start=entry_date, end=exit_date,
+                                         interval="1d", auto_adjust=True)
+        if hist.empty:
+            return {"mae": None, "mfe": None}
+        low_min  = float(hist["Low"].min())
+        high_max = float(hist["High"].max())
+        if direction == "LONG":
+            mae = round(max(0.0, entry_price - low_min), 4)
+            mfe = round(max(0.0, high_max - entry_price), 4)
+        else:
+            mae = round(max(0.0, high_max - entry_price), 4)
+            mfe = round(max(0.0, entry_price - low_min), 4)
+        return {"mae": mae, "mfe": mfe}
+    except Exception:
+        return {"mae": None, "mfe": None}
+
+
 # ── AI Coach ──────────────────────────────────────────────────────────────────
+
+FOCUS_INSTRUCTIONS = {
+    "general":    "Provide a comprehensive analysis covering all aspects of performance.",
+    "psychology": "Focus on psychological patterns: revenge trading, tilt, overconfidence after wins, fear after losses, and whether the trader holds losers longer than winners.",
+    "entries":    "Focus on entry and exit quality: are entries too early or late, are winners cut too short (MFE >> exit), are losers held too long (MAE >> loss).",
+    "sizing":     "Focus on position sizing: is it consistent, does performance correlate with size, are larger positions managed differently?",
+}
 
 class CoachRequest(BaseModel):
     notes: str = ""
+    focus: str = "general"
 
 @app.post("/api/coach/generate")
 def generate_coach(req: CoachRequest):
     _, closed = build_portfolio()
     m = summary_dict(closed) if closed else {}
-    recent = sorted(closed, key=lambda t: t.exit_date, reverse=True)[:10]
+    if not closed:
+        return {"response": "No closed trades yet — nothing to analyse."}
+
+    sorted_trades = sorted(closed, key=lambda t: t.exit_date)
+    winners = [t for t in closed if t.realized_pnl > 0]
+    losers  = [t for t in closed if t.realized_pnl <= 0]
+
+    # All trades table
     trade_lines = "\n".join(
-        f"- {t.symbol} {t.direction} exit {t.exit_date}: PnL={t.realized_pnl:.2f} R={t.r_multiple or 'N/A'}"
-        for t in recent
+        f"{t.symbol} {t.direction} | {t.entry_date}→{t.exit_date} "
+        f"| hold={(t.exit_date-t.entry_date).days}d "
+        f"| entry={t.avg_entry:.4f} exit={t.avg_exit:.4f} "
+        f"| pnl={t.realized_pnl:.2f} | R={f'{t.r_multiple:.2f}' if t.r_multiple is not None else 'N/A'}"
+        for t in sorted_trades
     )
-    prompt = (
-        f"Trading performance summary:\n"
-        f"Win rate: {(m.get('win_rate') or 0):.1%}, "
-        f"Profit factor: {(m.get('profit_factor') or 0):.2f}, "
-        f"Expectancy: {(m.get('expectancy_r') or 0):.2f}R, "
-        f"Total trades: {m.get('total_trades') or 0}\n\n"
-        f"Recent trades:\n{trade_lines}\n\n"
-        f"Trader notes: {req.notes or 'None provided'}\n\n"
-        f"As a trading coach, give 3-5 concise actionable insights based on these results."
+
+    # Best / worst 5 by R (fall back to PnL)
+    r_trades = [t for t in closed if t.r_multiple is not None]
+    rank_key = (lambda t: t.r_multiple) if r_trades else (lambda t: t.realized_pnl)
+    rank_set  = r_trades if r_trades else closed
+    best5  = sorted(rank_set, key=rank_key, reverse=True)[:5]
+    worst5 = sorted(rank_set, key=rank_key)[:5]
+    def _trade_str(t):
+        return f"{t.symbol} {t.direction} {t.exit_date} PnL={t.realized_pnl:.2f} R={t.r_multiple or 'N/A'}"
+
+    # Symbol performance
+    sym_pnl: dict[str, list[float]] = {}
+    for t in closed:
+        sym_pnl.setdefault(t.symbol, []).append(t.realized_pnl)
+    sym_summary = "\n".join(
+        f"  {sym}: {len(pnls)} trades, total={sum(pnls):.2f}, win%={100*sum(1 for p in pnls if p>0)/len(pnls):.0f}%"
+        for sym, pnls in sorted(sym_pnl.items(), key=lambda x: sum(x[1]), reverse=True)
     )
+
+    streak = m.get("current_streak", {})
+    focus_text = FOCUS_INSTRUCTIONS.get(req.focus, FOCUS_INSTRUCTIONS["general"])
+
+    prompt = f"""You are a professional quantitative trading performance analyst reviewing a trader's complete history.
+
+FOCUS: {focus_text}
+
+=== SUMMARY METRICS ===
+Trades: {m['total_trades']} | Win rate: {(m['win_rate'] or 0):.1%} | Profit factor: {(m['profit_factor'] or 0):.2f}
+Expectancy: {(m['expectancy_r'] or 0):.2f}R | R/R ratio: {(m['rr_ratio'] or 0):.2f}
+Avg win: {m['avg_win']:.2f} | Avg loss: {m['avg_loss']:.2f} | Max drawdown: {m['max_drawdown']:.2f}
+Current streak: {streak.get('count',0)}{streak.get('type','')} | Best win streak: {m['longest_win_streak']} | Worst loss streak: {m['longest_loss_streak']}
+Avg hold winners: {m['avg_hold_winners']}d | Avg hold losers: {m['avg_hold_losers']}d
+
+=== BEST 5 TRADES ===
+{chr(10).join(_trade_str(t) for t in best5)}
+
+=== WORST 5 TRADES ===
+{chr(10).join(_trade_str(t) for t in worst5)}
+
+=== PERFORMANCE BY SYMBOL ===
+{sym_summary}
+
+=== ALL TRADES (chronological) ===
+{trade_lines}
+
+=== TRADER NOTES ===
+{req.notes or 'None provided'}
+
+Respond with 4–6 specific, data-driven insights. Reference actual numbers from the data. End with 3 concrete actions the trader should take next week."""
+
     try:
         import anthropic
         client = anthropic.Anthropic()
         message = client.messages.create(
             model="claude-opus-4-7",
-            max_tokens=1024,
+            max_tokens=2048,
             messages=[{"role": "user", "content": prompt}],
         )
         return {"response": message.content[0].text}
     except Exception as e:
-        return {"response": f"AI coach unavailable: {e}\n\nPrompt that would have been sent:\n\n{prompt}"}
+        return {"response": f"AI coach unavailable: {e}\n\nPrompt sent:\n\n{prompt}"}
 
 
 # ── Static frontend ───────────────────────────────────────────────────────────
