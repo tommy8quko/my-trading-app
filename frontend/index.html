@@ -204,6 +204,7 @@ function PanelB({metrics}) {
 
 // ── Panel C: Diverging P&L bar chart by symbol ────────────────────────────────
 function PanelC({trades}) {
+  const [hoveredIndex, setHoveredIndex] = React.useState(null);
   if (!trades||!trades.length) return <div style={{flex:1}}/>;
   const recent=[...trades].sort((a,b)=>b.exit_date.localeCompare(a.exit_date)).slice(0,10);
   const maxAbs=Math.max(...recent.map(t=>Math.abs(t.pnl)),1);
@@ -212,18 +213,34 @@ function PanelC({trades}) {
       <div style={{...S.hdr,marginBottom:8}}>Recent 10 Trades</div>
       <div style={{flex:1,overflow:'auto'}}>
         {recent.map((t,i)=>{
-          const ratio=Math.abs(t.pnl)/maxAbs, isPos=t.pnl>=0;
+          const barPct=Math.sqrt(Math.abs(t.pnl))/Math.sqrt(maxAbs), isPos=t.pnl>=0;
+          const isHovered=hoveredIndex===i;
+          const pnlLabel=(t.pnl>=0?'+':'')+fmt(t.pnl,0);
           return (
-            <div key={i} style={{display:'flex',alignItems:'center',marginBottom:5,gap:4}}>
+            <div key={i} style={{display:'flex',alignItems:'center',marginBottom:5,gap:4}}
+              onMouseEnter={()=>setHoveredIndex(i)} onMouseLeave={()=>setHoveredIndex(null)}>
               <div style={{width:44,flexShrink:0,textAlign:'right',fontFamily:'Space Mono',fontSize:9,color:'#09CDDF',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.symbol}</div>
-              <div style={{flex:1,display:'flex',alignItems:'center',height:12}}>
+              <div style={{flex:1,display:'flex',alignItems:'center',height:12,position:'relative'}}>
                 <div style={{flex:1,display:'flex',justifyContent:'flex-end',height:'100%'}}>
-                  {!isPos&&<div style={{height:'100%',width:`${ratio*100}%`,background:`${RED}99`,borderRadius:'3px 0 0 3px'}}/>}
+                  {!isPos&&<div style={{height:'100%',width:`${barPct*100}%`,background:`${RED}99`,borderRadius:'3px 0 0 3px'}}/>}
                 </div>
                 <div style={{width:1,height:16,background:'rgba(255,255,255,0.1)',flexShrink:0}}/>
                 <div style={{flex:1,height:'100%'}}>
-                  {isPos&&<div style={{height:'100%',width:`${ratio*100}%`,background:`${GREEN}99`,borderRadius:'0 3px 3px 0'}}/>}
+                  {isPos&&<div style={{height:'100%',width:`${barPct*100}%`,background:`${GREEN}99`,borderRadius:'0 3px 3px 0'}}/>}
                 </div>
+                {isHovered && (
+                  <div style={{
+                    position:'absolute',
+                    top:'50%',transform:'translateY(-50%)',
+                    left: isPos ? `calc(50% + ${barPct*50}%)` : `calc(${50 - barPct*50}% - 4px)`,
+                    transform: isPos ? 'translateY(-50%)' : 'translate(-100%, -50%)',
+                    background:'#141a24',border:'1px solid rgba(255,255,255,0.1)',
+                    borderRadius:4,padding:'4px 10px',
+                    fontFamily:'Space Mono',fontSize:11,fontWeight:700,
+                    color:isPos?GREEN:RED,
+                    pointerEvents:'none',whiteSpace:'nowrap',zIndex:10,
+                  }}>{pnlLabel}</div>
+                )}
               </div>
             </div>
           );
