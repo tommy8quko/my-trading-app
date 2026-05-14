@@ -27,15 +27,14 @@ tr:hover td{background:rgba(255,255,255,0.02)}
 @media(max-width:640px){
   html,body,#root{height:auto;overflow-y:auto}
   .app-root{flex-direction:column!important;height:auto!important;overflow-y:auto!important}
-  .app-sidebar{display:none!important}
   .app-main{overflow:visible!important;height:auto!important;min-height:100vh}
   .mobile-nav{display:flex!important;position:fixed;bottom:0;left:0;right:0;
     background:#090c10;border-top:1px solid rgba(255,255,255,0.08);z-index:100}
-  .dash-container{flex-direction:column!important;overflow:visible!important;height:auto!important}
-  .dash-kpi{width:100%!important;display:grid!important;grid-template-columns:repeat(2,1fr)!important;overflow:visible!important}
-  .dash-right{overflow:visible!important;height:auto!important;flex:none!important}
-  .dash-equity{height:200px!important;flex:none!important;padding:12px!important}
-  .dash-positions{overflow-x:auto!important;padding:12px!important}
+  .dash-top{flex-direction:column!important;overflow:visible!important;height:auto!important;flex:none!important}
+  .dash-kpi{width:100%!important;display:grid!important;grid-template-columns:repeat(2,1fr)!important;overflow:visible!important;flex:none!important}
+  .dash-mid{height:220px!important;flex:none!important}
+  .dash-equity{height:160px!important;flex:none!important;padding:12px!important}
+  .dash-positions{height:auto!important;overflow-x:auto!important;padding:12px!important;flex:none!important}
   .analysis-content{padding:12px!important}
 }
 </style>
@@ -45,8 +44,8 @@ tr:hover td{background:rgba(255,255,255,0.02)}
 <script type="text/babel">
 const API    = '/api';
 const ACCENT = '#4499ff';
-const GREEN  = '#3ecf8e';
-const RED    = '#f05b6b';
+const GREEN  = '#059690';
+const RED    = '#CE314B';
 const YELLOW = '#f5b844';
 
 const api = async (path, opts={}) => {
@@ -85,7 +84,7 @@ const S = {
   }),
 };
 
-// ── Sidebar ───────────────────────────────────────────────────────────────────
+// ── Top Nav ───────────────────────────────────────────────────────────────────
 const NAV = [
   {id:'dashboard', label:'Dashboard'},
   {id:'journal',   label:'Journal'},
@@ -93,30 +92,25 @@ const NAV = [
   {id:'data',      label:'Data'},
 ];
 
-function Sidebar({active, onNav}) {
+function TopNav({active, onNav}) {
   return (
-    <div style={{width:200,background:'#090c10',borderRight:'1px solid rgba(255,255,255,0.06)',
-      display:'flex',flexDirection:'column',flexShrink:0}}>
-      <div style={{padding:'16px',borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
-        <div style={{fontSize:13,fontWeight:700,color:'#c8d0e0',letterSpacing:'-0.01em'}}>Trading Journal</div>
-        <div style={{fontSize:10,color:'#5a6478',marginTop:3,fontFamily:'Space Mono',letterSpacing:'.06em'}}>IBKR · CHIEF HK</div>
-      </div>
-      <nav style={{padding:'8px 0'}}>
-        {NAV.map(n => (
+    <div style={{height:44,display:'flex',alignItems:'center',background:'#090c10',
+      borderBottom:'1px solid rgba(255,255,255,0.06)',flexShrink:0,padding:'0 20px'}}>
+      <div style={{fontSize:13,fontWeight:700,color:'#c8d0e0',letterSpacing:'-0.01em',marginRight:32,flexShrink:0}}>TJ</div>
+      <div style={{flex:1,display:'flex',alignItems:'stretch',justifyContent:'center',height:44}}>
+        {NAV.map(n=>(
           <button key={n.id} onClick={()=>onNav(n.id)} style={{
-            display:'flex',alignItems:'center',gap:10,width:'100%',padding:'9px 16px',
-            background: active===n.id ? 'rgba(68,153,255,0.1)' : 'transparent',
-            borderLeft: active===n.id ? `2px solid ${ACCENT}` : '2px solid transparent',
-            borderTop:'none',borderRight:'none',borderBottom:'none',
+            padding:'0 18px',background:'transparent',border:'none',
+            borderBottom: active===n.id ? `2px solid ${ACCENT}` : '2px solid transparent',
             color: active===n.id ? '#c8d0e0' : '#5a6478',
             fontSize:10,fontFamily:'Space Grotesk',fontWeight:500,
-            letterSpacing:'.08em',textTransform:'uppercase',
-            marginBottom:1,textAlign:'left',
-          }}>
-            {n.label}
-          </button>
+            letterSpacing:'.08em',textTransform:'uppercase',cursor:'pointer',
+          }}>{n.label}</button>
         ))}
-      </nav>
+      </div>
+      <div style={{fontSize:10,color:'#5a6478',fontFamily:'Space Mono',letterSpacing:'.06em',flexShrink:0}}>
+        IBKR · Chief Securities HK
+      </div>
     </div>
   );
 }
@@ -138,12 +132,135 @@ function TabBar({tabs, active, onChange}) {
   );
 }
 
-// ── Page header ───────────────────────────────────────────────────────────────
-function PageHeader({title}) {
+// ── Metric Strip ──────────────────────────────────────────────────────────────
+function MetricStrip({metrics, currency}) {
+  if (!metrics) return null;
+  const panels = [
+    {label:'Total P&L',       val:(metrics.total_pnl>=0?'+':'')+fmt(metrics.total_pnl,2)+' '+currency, color:pnlColor(metrics.total_pnl)},
+    {label:'Profit-Loss Ratio',val:metrics.profit_factor!=null?fmt(metrics.profit_factor,2):'—',        color:metrics.profit_factor>=1?GREEN:RED},
+    {label:'Win Rate',         val:pct(metrics.win_rate),                                               color:metrics.win_rate>=0.4?GREEN:RED},
+  ];
   return (
-    <div style={{height:40,display:'flex',alignItems:'center',padding:'0 20px',
-      borderBottom:'1px solid rgba(255,255,255,0.06)',flexShrink:0,background:'#090c10'}}>
-      <span style={{fontSize:11,fontWeight:600,color:'#5a6478',letterSpacing:'.12em',textTransform:'uppercase'}}>{title}</span>
+    <div style={{height:60,display:'flex',background:'#0b0e14',borderBottom:'1px solid rgba(255,255,255,0.06)',flexShrink:0}}>
+      {panels.map((p,i)=>(
+        <div key={i} style={{flex:1,display:'flex',flexDirection:'column',justifyContent:'center',padding:'0 20px',
+          borderRight:i<panels.length-1?'1px solid rgba(255,255,255,0.06)':'none'}}>
+          <div style={S.hdr}>{p.label}</div>
+          <div style={{fontSize:18,fontFamily:'Space Mono',fontWeight:700,color:p.color||'#c8d0e0'}}>{p.val}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Donut Chart ───────────────────────────────────────────────────────────────
+function DonutChart({fillRatio, displayVal, label, color, size=80}) {
+  const r=size*0.36, cx=size/2, cy=size/2, sw=size*0.09;
+  const circ=2*Math.PI*r, filled=circ*Math.min(Math.max(fillRatio||0,0),1);
+  const fs=size*0.15;
+  return (
+    <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:4}}>
+      <svg width={size} height={size}>
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={sw}/>
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth={sw}
+          strokeDasharray={`${filled} ${circ-filled}`} strokeDashoffset={circ*0.25} strokeLinecap="round"/>
+        <text x={cx} y={cy+fs*0.4} textAnchor="middle" fill="#c8d0e0" fontSize={fs} fontFamily="Space Mono" fontWeight="700">
+          {displayVal}
+        </text>
+      </svg>
+      <div style={{fontSize:9,color:'#5a6478',fontFamily:'Space Grotesk',fontWeight:500,letterSpacing:'.06em',textTransform:'uppercase'}}>{label}</div>
+    </div>
+  );
+}
+
+// ── Panel A: Avg Win / Avg Loss ───────────────────────────────────────────────
+function PanelA({metrics}) {
+  return (
+    <div style={{height:70,display:'flex',alignItems:'center',padding:'0 16px',flexShrink:0,
+      borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
+      <div style={{flex:1,paddingRight:12,borderRight:'1px solid rgba(255,255,255,0.06)'}}>
+        <div style={S.hdr}>Avg Win</div>
+        <div style={{fontFamily:'Space Mono',fontWeight:700,fontSize:15,color:GREEN}}>+{fmt(metrics.avg_win,2)}</div>
+      </div>
+      <div style={{flex:1,paddingLeft:12}}>
+        <div style={S.hdr}>Avg Loss</div>
+        <div style={{fontFamily:'Space Mono',fontWeight:700,fontSize:15,color:RED}}>{fmt(metrics.avg_loss,2)}</div>
+      </div>
+    </div>
+  );
+}
+
+// ── Panel B: Win Rate + Profit Factor donuts ──────────────────────────────────
+function PanelB({metrics}) {
+  const wr=metrics.win_rate||0, pf=metrics.profit_factor||0;
+  return (
+    <div style={{height:150,display:'flex',alignItems:'center',justifyContent:'space-evenly',padding:'0 8px',flexShrink:0,
+      borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
+      <DonutChart fillRatio={wr} displayVal={pct(wr)} label="Win Rate" color={wr>=0.4?GREEN:RED} size={80}/>
+      <DonutChart fillRatio={Math.min(pf/3,1)} displayVal={pf>0?fmt(pf,2):'—'} label="Prof Factor" color={pf>=1?GREEN:RED} size={80}/>
+    </div>
+  );
+}
+
+// ── Panel C: Diverging P&L bar chart by symbol ────────────────────────────────
+function PanelC({trades}) {
+  if (!trades||!trades.length) return <div style={{flex:1}}/>;
+  const bySymbol={};
+  trades.forEach(t=>{bySymbol[t.symbol]=(bySymbol[t.symbol]||0)+t.pnl;});
+  const entries=Object.entries(bySymbol).map(([sym,pnl])=>({sym,pnl})).sort((a,b)=>b.pnl-a.pnl);
+  const maxAbs=Math.max(...entries.map(e=>Math.abs(e.pnl)),1);
+  return (
+    <div style={{flex:1,overflow:'hidden',padding:'10px 12px',display:'flex',flexDirection:'column',minHeight:0}}>
+      <div style={{...S.hdr,marginBottom:8}}>P&L by Symbol</div>
+      <div style={{flex:1,overflow:'auto'}}>
+        {entries.map(({sym,pnl})=>{
+          const ratio=Math.abs(pnl)/maxAbs, isPos=pnl>=0;
+          return (
+            <div key={sym} style={{display:'flex',alignItems:'center',marginBottom:5,gap:4}}>
+              <div style={{width:44,flexShrink:0,textAlign:'right',fontFamily:'Space Mono',fontSize:9,color:'#09CDDF',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sym}</div>
+              <div style={{flex:1,display:'flex',alignItems:'center',height:12}}>
+                <div style={{flex:1,display:'flex',justifyContent:'flex-end',height:'100%'}}>
+                  {!isPos&&<div style={{height:'100%',width:`${ratio*100}%`,background:`${RED}99`,borderRadius:'3px 0 0 3px'}}/>}
+                </div>
+                <div style={{width:1,height:16,background:'rgba(255,255,255,0.1)',flexShrink:0}}/>
+                <div style={{flex:1,height:'100%'}}>
+                  {isPos&&<div style={{height:'100%',width:`${ratio*100}%`,background:`${GREEN}99`,borderRadius:'0 3px 3px 0'}}/>}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Holding Period Bar Chart ───────────────────────────────────────────────────
+function HoldingBarChart({trades}) {
+  const buckets=['Intra','1–3d','4–10d','11–30d','31+d'];
+  const getBucket=t=>{
+    const d=Math.round((new Date(t.exit_date)-new Date(t.entry_date))/(1000*86400));
+    if(d===0)return'Intra';if(d<=3)return'1–3d';if(d<=10)return'4–10d';if(d<=30)return'11–30d';return'31+d';
+  };
+  const data={};buckets.forEach(b=>data[b]=0);
+  (trades||[]).forEach(t=>{const b=getBucket(t);data[b]+=t.pnl;});
+  const vals=buckets.map(b=>data[b]);
+  const maxAbs=Math.max(...vals.map(Math.abs),1);
+  return (
+    <div style={{height:'100%',padding:'8px 18px',display:'flex',flexDirection:'column'}}>
+      <div style={{...S.hdr,marginBottom:6}}>Holding vs P&L</div>
+      <div style={{flex:1,display:'flex',alignItems:'flex-end',gap:6}}>
+        {buckets.map((b,i)=>{
+          const v=vals[i], isPos=v>=0, ratio=Math.abs(v)/maxAbs;
+          return (
+            <div key={b} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',height:'100%',justifyContent:'flex-end'}}>
+              <div style={{fontSize:8,fontFamily:'Space Mono',color:isPos?GREEN:RED,marginBottom:1}}>{v>=0?'+':''}{fmt(v,0)}</div>
+              <div style={{width:'80%',background:isPos?`${GREEN}99`:`${RED}99`,height:`${ratio*70}%`,minHeight:2,borderRadius:'3px 3px 0 0'}}/>
+              <div style={{fontSize:8,color:'#5a6478',fontFamily:'Space Grotesk',marginTop:3,textAlign:'center',whiteSpace:'nowrap'}}>{b}</div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -429,172 +546,130 @@ function ResizeHandle({dir, active, onMouseDown}) {
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 function Dashboard() {
-  const [data,      setData]      = React.useState(null);
-  const [metrics,   setMetrics]   = React.useState(null);
-  const [currency,  setCurrency]  = React.useState('USD');
-  const [loading,   setLoading]   = React.useState(true);
-  const [spyData,   setSpyData]   = React.useState([]);
-  const [kpiWidth,  setKpiWidth]  = React.useState(() => parseInt(localStorage.getItem('tj_kpiWidth')  || '200'));
-  const [equityPct, setEquityPct] = React.useState(() => parseFloat(localStorage.getItem('tj_equityPct') || '45'));
-  const [dragging,  setDragging]  = React.useState(null); // 'v' | 'h' | null
-  const [posSort,   setPosSort]   = React.useState({col:null, dir:'asc'});
-  const containerRef = React.useRef(null);
-  const rightRef     = React.useRef(null);
+  const [data,     setData]     = React.useState(null);
+  const [metrics,  setMetrics]  = React.useState(null);
+  const [currency, setCurrency] = React.useState('USD');
+  const [loading,  setLoading]  = React.useState(true);
+  const [spyData,  setSpyData]  = React.useState([]);
+  const [posSort,  setPosSort]  = React.useState({col:null, dir:'asc'});
 
   const load = async (ccy) => {
     setLoading(true);
     const [p, m] = await Promise.all([api('/portfolio'), api(`/metrics?currency=${ccy}`)]);
     setData(p); setMetrics(m); setLoading(false);
-    // Load SPY in background after main data
     if (m.equity_curve && m.equity_curve.length) {
       const from = m.equity_curve[0].date;
       api(`/stats/spy?from_date=${from}`).then(setSpyData).catch(()=>{});
     }
   };
   React.useEffect(()=>{ load(currency); }, [currency]);
-  React.useEffect(()=>{ localStorage.setItem('tj_kpiWidth',  String(kpiWidth));  }, [kpiWidth]);
-  React.useEffect(()=>{ localStorage.setItem('tj_equityPct', String(equityPct)); }, [equityPct]);
 
   if (loading) return <Spinner/>;
 
   const currencies = metrics.currencies || ['USD'];
   const kpis = [
-    {label:'Total P&L',     val:`${fmt(metrics.total_pnl,2)} ${currency}`, color:pnlColor(metrics.total_pnl)},
-    {label:'Win Rate',      val:pct(metrics.win_rate),                     color:metrics.win_rate>=0.4?GREEN:RED},
-    {label:'Max Drawdown',  val:fmt(metrics.max_drawdown,2),               color:RED},
-    {label:'Profit Factor', val:fmt(metrics.profit_factor,2),              color:metrics.profit_factor>=1?GREEN:RED},
-    {label:'Expectancy',    val:metrics.expectancy_r!=null ? fmt(metrics.expectancy_r,2)+'R' : '—', color:metrics.expectancy_r>0?GREEN:RED},
-    {label:'R/R',           val:metrics.rr_ratio!=null ? fmt(metrics.rr_ratio,2)+' : 1' : '—', color:metrics.rr_ratio>=1?GREEN:RED},
-    {label:'Avg Win',       val:'+'+fmt(metrics.avg_win,2),                color:GREEN},
-    {label:'Avg Loss',      val:fmt(metrics.avg_loss,2),                   color:RED},
-    {label:'Current Streak',val:metrics.current_streak?.count ? `${metrics.current_streak.count}${metrics.current_streak.type}` : '—',
-      color: metrics.current_streak?.type==='W'?GREEN : metrics.current_streak?.type==='L'?RED:'#c8d0e0'},
-    {label:'Best Win Streak', val: metrics.longest_win_streak ? `${metrics.longest_win_streak}W` : '—', color:GREEN},
-    {label:'Worst Loss Streak',val:metrics.longest_loss_streak ? `${metrics.longest_loss_streak}L` : '—', color:RED},
-    {label:'Trades',        val:metrics.total_trades},
-    {label:'Pending Review',val:metrics.pending_review, color:metrics.pending_review>0?YELLOW:'#c8d0e0'},
+    {label:'Total P&L',       val:`${fmt(metrics.total_pnl,2)} ${currency}`,                          color:pnlColor(metrics.total_pnl)},
+    {label:'Win Rate',        val:pct(metrics.win_rate),                                               color:metrics.win_rate>=0.4?GREEN:RED},
+    {label:'Max Drawdown',    val:fmt(metrics.max_drawdown,2),                                         color:RED},
+    {label:'Profit Factor',   val:fmt(metrics.profit_factor,2),                                        color:metrics.profit_factor>=1?GREEN:RED},
+    {label:'Expectancy',      val:metrics.expectancy_r!=null?fmt(metrics.expectancy_r,2)+'R':'—',     color:metrics.expectancy_r>0?GREEN:RED},
+    {label:'R/R',             val:metrics.rr_ratio!=null?fmt(metrics.rr_ratio,2)+' : 1':'—',          color:metrics.rr_ratio>=1?GREEN:RED},
+    {label:'Avg Win',         val:'+'+fmt(metrics.avg_win,2),                                          color:GREEN},
+    {label:'Avg Loss',        val:fmt(metrics.avg_loss,2),                                             color:RED},
+    {label:'Current Streak',  val:metrics.current_streak?.count?`${metrics.current_streak.count}${metrics.current_streak.type}`:'—',
+      color:metrics.current_streak?.type==='W'?GREEN:metrics.current_streak?.type==='L'?RED:'#c8d0e0'},
+    {label:'Best Win Streak', val:metrics.longest_win_streak?`${metrics.longest_win_streak}W`:'—',    color:GREEN},
+    {label:'Worst Loss Streak',val:metrics.longest_loss_streak?`${metrics.longest_loss_streak}L`:'—', color:RED},
+    {label:'Trades',          val:metrics.total_trades},
+    {label:'Pending Review',  val:metrics.pending_review, color:metrics.pending_review>0?YELLOW:'#c8d0e0'},
   ];
-
-  const startVertDrag = (e) => {
-    e.preventDefault();
-    setDragging('v');
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-    const onMove = (ev) => {
-      if (!containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      setKpiWidth(Math.max(140, Math.min(320, ev.clientX - rect.left)));
-    };
-    const onUp = () => {
-      setDragging(null);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  };
-
-  const startHorizDrag = (e) => {
-    e.preventDefault();
-    setDragging('h');
-    document.body.style.cursor = 'row-resize';
-    document.body.style.userSelect = 'none';
-    const onMove = (ev) => {
-      if (!rightRef.current) return;
-      const rect = rightRef.current.getBoundingClientRect();
-      const pct = ((ev.clientY - rect.top) / rect.height) * 100;
-      setEquityPct(Math.max(20, Math.min(80, pct)));
-    };
-    const onUp = () => {
-      setDragging(null);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  };
 
   const EXCL = new Set(['SGOV','BOXX']);
   const closedForCurrency = data ? (data.closed_trades||[]).filter(t=>t.currency===currency&&!EXCL.has(t.symbol)) : [];
 
   return (
-    <div ref={containerRef} className="dash-container" style={{flex:1,display:'flex',overflow:'hidden'}}>
+    <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
 
-      {/* ── KPI column ─────────────────────────────────────────────────────── */}
-      <div className="dash-kpi" style={{width:kpiWidth,display:'flex',flexDirection:'column',flexShrink:0,overflow:'auto'}}>
-        {currencies.length > 1 && (
-          <div style={{padding:'14px 14px 6px',display:'flex',gap:6}}>
-            {currencies.map(c=>(
-              <button key={c} onClick={()=>setCurrency(c)} style={{
-                flex:1,padding:'5px 0',fontSize:10,borderRadius:4,border:'none',
-                background: currency===c ? `${ACCENT}22` : 'rgba(255,255,255,0.05)',
-                color: currency===c ? ACCENT : '#5a6478',
-                fontFamily:'Space Mono',fontWeight:700,letterSpacing:'.06em',
-              }}>{c}</button>
-            ))}
+      {/* ── Metric Strip ─────────────────────────────────────────────────── */}
+      <MetricStrip metrics={metrics} currency={currency}/>
+
+      {/* ── 3-column top section ─────────────────────────────────────────── */}
+      <div className="dash-top" style={{flex:3,display:'flex',overflow:'hidden',minHeight:0}}>
+
+        {/* KPI column */}
+        <div className="dash-kpi" style={{width:180,display:'flex',flexDirection:'column',flexShrink:0,overflow:'auto',borderRight:'1px solid rgba(255,255,255,0.06)'}}>
+          {currencies.length > 1 && (
+            <div style={{padding:'10px 12px 4px',display:'flex',gap:6}}>
+              {currencies.map(c=>(
+                <button key={c} onClick={()=>setCurrency(c)} style={{
+                  flex:1,padding:'4px 0',fontSize:10,borderRadius:4,border:'none',
+                  background:currency===c?`${ACCENT}22`:'rgba(255,255,255,0.05)',
+                  color:currency===c?ACCENT:'#5a6478',
+                  fontFamily:'Space Mono',fontWeight:700,letterSpacing:'.06em',
+                }}>{c}</button>
+              ))}
+            </div>
+          )}
+          {kpis.map((k,i)=>(
+            <div key={i} style={{padding:'9px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
+              <div style={S.hdr}>{k.label}</div>
+              <div style={{...S.val,fontSize:15,color:k.color||'#c8d0e0'}}>{k.val}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Middle: equity curve + holding chart */}
+        <div className="dash-mid" style={{flex:52,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0,borderRight:'1px solid rgba(255,255,255,0.06)'}}>
+          <div className="dash-equity" style={{flex:3,overflow:'hidden',padding:'14px 18px',display:'flex',flexDirection:'column',minHeight:0}}>
+            <EquityCurve data={metrics.equity_curve} trades={closedForCurrency} spyData={spyData}/>
           </div>
-        )}
-        {kpis.map((k,i)=>(
-          <div key={i} style={{padding:'12px 16px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
-            <div style={S.hdr}>{k.label}</div>
-            <div style={{...S.val,color:k.color||'#c8d0e0'}}>{k.val}</div>
+          <div style={{flex:2,borderTop:'1px solid rgba(255,255,255,0.06)',minHeight:0}}>
+            <HoldingBarChart trades={closedForCurrency}/>
           </div>
-        ))}
+        </div>
+
+        {/* Right: Panel A + B + C */}
+        <div style={{flex:48,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:140}}>
+          <PanelA metrics={metrics}/>
+          <PanelB metrics={metrics}/>
+          <PanelC trades={closedForCurrency}/>
+        </div>
       </div>
 
-      {/* ── Vertical resize handle ──────────────────────────────────────────── */}
-      <ResizeHandle dir="v" active={dragging==='v'} onMouseDown={startVertDrag}/>
-
-      {/* ── Right panel ────────────────────────────────────────────────────── */}
-      <div ref={rightRef} className="dash-right" style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
-
-        {/* Equity curve — height driven by equityPct; flex column so EquityCurve fills it */}
-        <div className="dash-equity" style={{flex:`0 0 ${equityPct}%`,overflow:'hidden',padding:'16px 20px',display:'flex',flexDirection:'column'}}>
-          <EquityCurve data={metrics.equity_curve} trades={closedForCurrency} spyData={spyData}/>
-        </div>
-
-        {/* ── Horizontal resize handle ──────────────────────────────────────── */}
-        <ResizeHandle dir="h" active={dragging==='h'} onMouseDown={startHorizDrag}/>
-
-        {/* Open positions */}
-        <div className="dash-positions" style={{flex:1,overflow:'auto',padding:'16px 20px'}}>
-          <div style={{...S.hdr,marginBottom:12}}>Open Positions ({data.open_positions.length})</div>
-          {data.open_positions.length === 0
-            ? <div style={{color:'#5a6478',fontSize:12}}>No open positions</div>
-            : (() => {
-              const tog = col => setPosSort(s=>({col, dir:s.col===col&&s.dir==='asc'?'desc':'asc'}));
-              const rows = applySort(data.open_positions, posSort.col, posSort.dir);
-              return (
-                <table>
-                  <thead><tr>
-                    <SortTh col="symbol"        label="Symbol"    sort={posSort} onSort={tog}/>
-                    <SortTh col="currency"      label="Ccy"       sort={posSort} onSort={tog}/>
-                    <SortTh col="direction"     label="Dir"       sort={posSort} onSort={tog}/>
-                    <SortTh col="quantity"      label="Qty"       sort={posSort} onSort={tog} align="right"/>
-                    <SortTh col="avg_entry"     label="Avg Entry" sort={posSort} onSort={tog} align="right"/>
-                    <SortTh col="stop_loss"     label="Stop"      sort={posSort} onSort={tog} align="right"/>
-                    <SortTh col="unrealized_pnl" label="P&L"      sort={posSort} onSort={tog} align="right"/>
-                    <SortTh col="pct_return"    label="% Ret"     sort={posSort} onSort={tog} align="right"/>
-                  </tr></thead>
-                  <tbody>
-                    {rows.map((p,i)=><PositionRow key={i} p={p} onRefresh={()=>api('/portfolio').then(setData)}/>)}
-                  </tbody>
-                </table>
-              );
-            })()
-          }
-        </div>
+      {/* ── Open Positions (full width) ──────────────────────────────────── */}
+      <div className="dash-positions" style={{flex:2,minHeight:0,overflow:'auto',padding:'10px 18px',borderTop:'1px solid rgba(255,255,255,0.06)'}}>
+        <div style={{...S.hdr,marginBottom:10}}>Open Positions ({data.open_positions.length})</div>
+        {data.open_positions.length === 0
+          ? <div style={{color:'#5a6478',fontSize:12}}>No open positions</div>
+          : (() => {
+            const tog = col => setPosSort(s=>({col, dir:s.col===col&&s.dir==='asc'?'desc':'asc'}));
+            const rows = applySort(data.open_positions, posSort.col, posSort.dir);
+            return (
+              <table>
+                <thead style={{position:'sticky',top:0,background:'#090c10',zIndex:10}}><tr>
+                  <SortTh col="symbol"         label="Symbol"    sort={posSort} onSort={tog}/>
+                  <SortTh col="currency"       label="Ccy"       sort={posSort} onSort={tog}/>
+                  <SortTh col="direction"      label="Dir"       sort={posSort} onSort={tog}/>
+                  <SortTh col="quantity"       label="Qty"       sort={posSort} onSort={tog} align="right"/>
+                  <SortTh col="avg_entry"      label="Avg Entry" sort={posSort} onSort={tog} align="right"/>
+                  <SortTh col="stop_loss"      label="Stop"      sort={posSort} onSort={tog} align="right"/>
+                  <SortTh col="unrealized_pnl" label="P&L"       sort={posSort} onSort={tog} align="right"/>
+                  <SortTh col="pct_return"     label="% Ret"     sort={posSort} onSort={tog} align="right"/>
+                </tr></thead>
+                <tbody>
+                  {rows.map((p,i)=><PositionRow key={i} p={p} idx={i} onRefresh={()=>api('/portfolio').then(setData)}/>)}
+                </tbody>
+              </table>
+            );
+          })()
+        }
       </div>
     </div>
   );
 }
 
 // ── Position row with expandable lots + inline stop-loss edit + trade review ───
-function PositionRow({p, onRefresh}) {
+function PositionRow({p, idx=0, onRefresh}) {
   const [open,       setOpen]       = React.useState(false);
   const [slVals,     setSlVals]     = React.useState({});
   const [saving,     setSaving]     = React.useState({});
@@ -650,10 +725,18 @@ function PositionRow({p, onRefresh}) {
 
   return (
     <>
-      <tr onClick={()=>setOpen(!open)} style={{cursor:'pointer'}}>
-        <td style={S.ticker}>{p.symbol} <span style={{color:'#5a6478',fontSize:9}}>{open?'▲':'▼'}</span></td>
-        <td>{p.currency}</td>
-        <td style={{color:'#5a6478',textTransform:'uppercase',fontSize:10,letterSpacing:'.06em'}}>{p.direction}</td>
+      <tr onClick={()=>setOpen(!open)} style={{cursor:'pointer',background:idx%2===1?'rgba(255,255,255,0.015)':'transparent'}}>
+        <td style={{font:'700 13px/1 "Space Mono",monospace',color:'#09CDDF'}}>{p.symbol} <span style={{color:'#5a6478',fontSize:9}}>{open?'▲':'▼'}</span></td>
+        <td style={{color:'#4a5670'}}>{p.currency}</td>
+        <td>
+          <span style={{display:'inline-flex',alignItems:'center',padding:'2px 6px',borderRadius:3,
+            background:p.direction?.toUpperCase()==='LONG'?'#08888522':'#F96E8F22',
+            color:p.direction?.toUpperCase()==='LONG'?'#088885':'#F96E8F',
+            border:`1px solid ${p.direction?.toUpperCase()==='LONG'?'#08888544':'#F96E8F44'}`,
+            fontSize:9,fontFamily:'Space Grotesk',fontWeight:700,textTransform:'uppercase',letterSpacing:'.06em'}}>
+            {p.direction}
+          </span>
+        </td>
         <td style={{textAlign:'right'}}>{fmt(p.quantity)}</td>
         <td style={{textAlign:'right'}}>{fmt(p.avg_entry,4)}</td>
         <td style={{textAlign:'right',color:RED}}>{p.stop_loss ? fmt(p.stop_loss,4) : '—'}</td>
@@ -725,6 +808,63 @@ function PositionRow({p, onRefresh}) {
   );
 }
 
+// ── Closed Trade Row (expandable) ─────────────────────────────────────────────
+function ClosedTradeRow({t, idx}) {
+  const [open, setOpen] = React.useState(false);
+  const isWin = t.pnl >= 0;
+  const altBg = idx%2===1 ? 'rgba(255,255,255,0.015)' : 'transparent';
+  const dirIsLong = t.direction?.toUpperCase()==='LONG';
+  const dirColor = dirIsLong ? '#088885' : '#F96E8F';
+  const hold = Math.round((new Date(t.exit_date)-new Date(t.entry_date))/(1000*86400));
+  return (
+    <>
+      <tr onClick={()=>setOpen(!open)} style={{cursor:'pointer',background:altBg}}>
+        <td style={{font:'700 13px/1 "Space Mono",monospace',color:'#09CDDF'}}>
+          <span style={{marginRight:4,color:'#5a6478',fontSize:10}}>{open?'▼':'›'}</span>{t.symbol}
+        </td>
+        <td style={{color:'#4a5670'}}>{t.currency}</td>
+        <td>
+          <span style={{display:'inline-flex',alignItems:'center',padding:'2px 6px',borderRadius:3,
+            background:dirIsLong?'#08888522':'#F96E8F22',color:dirColor,border:`1px solid ${dirColor}44`,
+            fontSize:9,fontFamily:'Space Grotesk',fontWeight:700,textTransform:'uppercase',letterSpacing:'.06em'}}>
+            {t.direction}
+          </span>
+        </td>
+        <td>
+          <span style={{display:'inline-flex',alignItems:'center',padding:'2px 6px',borderRadius:3,
+            background:isWin?`${GREEN}22`:`${RED}22`,color:isWin?GREEN:RED,border:`1px solid ${isWin?GREEN:RED}44`,
+            fontSize:9,fontFamily:'Space Grotesk',fontWeight:700,letterSpacing:'.06em'}}>
+            {isWin?'WIN':'LOSS'}
+          </span>
+        </td>
+        <td>{t.entry_date}</td>
+        <td>{t.exit_date}</td>
+        <td style={{textAlign:'right'}}>{fmt(t.quantity)}</td>
+        <td style={{textAlign:'right',fontWeight:700,color:pnlColor(t.pnl)}}>{t.pnl>=0?'+':''}{fmt(t.pnl,2)}</td>
+        <td style={{textAlign:'right',color:t.pct_return!=null?pnlColor(t.pct_return):'#5a6478'}}>
+          {t.pct_return!=null?(t.pct_return>=0?'+':'')+t.pct_return.toFixed(2)+'%':'—'}
+        </td>
+        <td style={{textAlign:'right',color:t.r_multiple!=null?(t.r_multiple>=0?GREEN:RED):'#5a6478'}}>
+          {t.r_multiple!=null?fmt(t.r_multiple,2)+'R':'—'}
+        </td>
+      </tr>
+      {open && (
+        <tr style={{background:altBg}}>
+          <td colSpan={10} style={{padding:'10px 20px',borderTop:'1px solid rgba(255,255,255,0.04)'}}>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:14}}>
+              <div><div style={S.hdr}>Avg In</div><div style={{fontFamily:'Space Mono',fontSize:12,color:'#c8d0e0'}}>{fmt(t.avg_entry,4)}</div></div>
+              <div><div style={S.hdr}>Avg Out</div><div style={{fontFamily:'Space Mono',fontSize:12,color:'#c8d0e0'}}>{fmt(t.avg_exit,4)}</div></div>
+              <div><div style={S.hdr}>Fees</div><div style={{fontFamily:'Space Mono',fontSize:12,color:'#5a6478'}}>{fmt(t.fees,2)}</div></div>
+              <div><div style={S.hdr}>Hold</div><div style={{fontFamily:'Space Mono',fontSize:12,color:'#5a6478'}}>{hold}d</div></div>
+              <div><div style={S.hdr}>R Multiple</div><div style={{fontFamily:'Space Mono',fontSize:12,color:t.r_multiple!=null?(t.r_multiple>=0?GREEN:RED):'#5a6478'}}>{t.r_multiple!=null?fmt(t.r_multiple,2)+'R':'—'}</div></div>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
 // ── Journal ───────────────────────────────────────────────────────────────────
 function Journal() {
   const [tab,        setTab]        = React.useState('Trade Log');
@@ -756,33 +896,16 @@ function Journal() {
                   <SortTh col="symbol"     label="Symbol"  sort={tradeSort} onSort={tog}/>
                   <SortTh col="currency"   label="Ccy"     sort={tradeSort} onSort={tog}/>
                   <SortTh col="direction"  label="Dir"     sort={tradeSort} onSort={tog}/>
+                  <th>Status</th>
                   <SortTh col="entry_date" label="Entry"   sort={tradeSort} onSort={tog}/>
                   <SortTh col="exit_date"  label="Exit"    sort={tradeSort} onSort={tog}/>
                   <SortTh col="quantity"   label="Qty"     sort={tradeSort} onSort={tog} align="right"/>
-                  <SortTh col="avg_entry"  label="Avg In"  sort={tradeSort} onSort={tog} align="right"/>
-                  <SortTh col="avg_exit"   label="Avg Out" sort={tradeSort} onSort={tog} align="right"/>
-                  <SortTh col="fees"       label="Fees"    sort={tradeSort} onSort={tog} align="right"/>
                   <SortTh col="pnl"        label="P&L"     sort={tradeSort} onSort={tog} align="right"/>
                   <SortTh col="pct_return" label="% Ret"   sort={tradeSort} onSort={tog} align="right"/>
                   <SortTh col="r_multiple" label="R"       sort={tradeSort} onSort={tog} align="right"/>
                 </tr></thead>
                 <tbody>
-                  {rows.map((t,i)=>(
-                    <tr key={i}>
-                      <td style={S.ticker}>{t.symbol}</td>
-                      <td>{t.currency}</td>
-                      <td style={{textTransform:'uppercase',fontSize:10,letterSpacing:'.06em'}}>{t.direction}</td>
-                      <td>{t.entry_date}</td>
-                      <td>{t.exit_date}</td>
-                      <td style={{textAlign:'right'}}>{fmt(t.quantity)}</td>
-                      <td style={{textAlign:'right'}}>{fmt(t.avg_entry,4)}</td>
-                      <td style={{textAlign:'right'}}>{fmt(t.avg_exit,4)}</td>
-                      <td style={{textAlign:'right'}}>{fmt(t.fees,2)}</td>
-                      <td style={{textAlign:'right',fontWeight:700,color:pnlColor(t.pnl)}}>{t.pnl>=0?'+':''}{fmt(t.pnl,2)}</td>
-                      <td style={{textAlign:'right',color:t.pct_return!=null?pnlColor(t.pct_return):'#5a6478'}}>{t.pct_return!=null?(t.pct_return>=0?'+':'')+t.pct_return.toFixed(2)+'%':'—'}</td>
-                      <td style={{textAlign:'right',color:t.r_multiple>=0?GREEN:RED}}>{t.r_multiple!=null?fmt(t.r_multiple,2)+'R':'—'}</td>
-                    </tr>
-                  ))}
+                  {rows.map((t,i)=><ClosedTradeRow key={i} t={t} idx={i}/>)}
                 </tbody>
               </table>
             </>
@@ -1562,13 +1685,11 @@ function Spinner() {
 // ── App root ──────────────────────────────────────────────────────────────────
 function App() {
   const [nav, setNav] = React.useState('dashboard');
-  const titles = {dashboard:'Dashboard',journal:'Journal',analysis:'Analysis',data:'Data Management'};
   const NAV_ITEMS = [{id:'dashboard',label:'Dash'},{id:'journal',label:'Journal'},{id:'analysis',label:'Analysis'},{id:'data',label:'Data'}];
   return (
-    <div className="app-root" style={{display:'flex',height:'100vh',overflow:'hidden'}}>
-      <div className="app-sidebar"><Sidebar active={nav} onNav={setNav}/></div>
+    <div className="app-root" style={{display:'flex',flexDirection:'column',height:'100vh',overflow:'hidden'}}>
+      <TopNav active={nav} onNav={setNav}/>
       <div className="app-main" style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
-        <PageHeader title={titles[nav]}/>
         {nav==='dashboard' && <Dashboard/>}
         {nav==='journal'   && <Journal/>}
         {nav==='analysis'  && <Analysis/>}
