@@ -23,6 +23,11 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 # ── Live price helper ─────────────────────────────────────────────────────────
 
+import time as _time
+_price_cache: dict[str, float | None] = {}
+_price_cache_ts: float = 0.0
+_PRICE_TTL = 300  # seconds (5 minutes)
+
 def _symbol_to_yf_ticker(symbol: str, exchange: str) -> str:
     """Convert a stored symbol to the yfinance ticker format."""
     ex = (exchange or "").upper()
@@ -33,10 +38,18 @@ def _symbol_to_yf_ticker(symbol: str, exchange: str) -> str:
 
 
 def _fetch_prices(positions: list[tuple[str, str]]) -> dict[str, float | None]:
-    """Fetch last close via yfinance for (symbol, exchange) pairs; keyed by original symbol."""
+    """Fetch last close via yfinance; cached for 5 minutes to avoid slow repeated calls."""
+    global _price_cache, _price_cache_ts
     if not positions:
         return {}
-    # Build ticker→original_symbol mapping (multiple symbols may share a ticker in edge cases)
+
+    now = _time.time()
+    symbols_requested = {sym for sym, _ in positions}
+
+    # Return cache if fresh and covers all requested symbols
+    if now - _price_cache_ts < _PRICE_TTL and symbols_requested <= _price_cache.keys():
+        return {sym: _price_cache[sym] for sym in symbols_requested}
+
     ticker_map: dict[str, str] = {
         _symbol_to_yf_ticker(sym, ex): sym for sym, ex in positions
     }
@@ -55,6 +68,8 @@ def _fetch_prices(positions: list[tuple[str, str]]) -> dict[str, float | None]:
                 result[orig_sym] = float(val) if not pd.isna(val) else None
             except Exception:
                 result[orig_sym] = None
+        _price_cache = result
+        _price_cache_ts = now
         return result
     except Exception:
         return {sym: None for sym, _ in positions}
