@@ -267,11 +267,12 @@ function EquityCurve({data, trades=[], spyData=[]}) {
         <div style={S.hdr}>Equity Curve</div>
         <div style={{display:'flex',gap:2,alignItems:'center'}}>
           <button onClick={()=>setShowSpy(!showSpy)} style={{
-            padding:'3px 8px',fontSize:9,borderRadius:4,border:'none',
-            background: showSpy ? `${YELLOW}22` : 'transparent',
-            color: showSpy ? YELLOW : '#5a6478',
+            padding:'3px 9px',fontSize:9,borderRadius:4,
+            border: showSpy ? `1px solid ${YELLOW}66` : '1px solid rgba(255,255,255,0.1)',
+            background: showSpy ? `${YELLOW}18` : 'rgba(255,255,255,0.04)',
+            color: showSpy ? YELLOW : '#8a96a8',
             fontFamily:'Space Mono',fontWeight:700,letterSpacing:'.04em',
-          }}>SPY</button>
+          }} title="Compare vs SPY benchmark">vs SPY</button>
           {['1M','3M','6M','ALL'].map(r=>(
             <button key={r} onClick={()=>setRange(r)} style={{
               padding:'3px 8px',fontSize:9,borderRadius:4,border:'none',
@@ -1097,23 +1098,35 @@ function Analysis() {
           <div style={{maxWidth:640}}>
             {/* ── Weekly Review ── */}
             <div style={{marginBottom:28,padding:'14px 16px',background:'rgba(68,153,255,0.04)',border:'1px solid rgba(68,153,255,0.1)',borderRadius:8}}>
-              <div style={{...S.hdr,marginBottom:10}}>Weekly Review (AI)</div>
-              <button style={S.btn(true)} onClick={async()=>{
-                setGenWeekly(true); setWeeklyResp('');
-                try {
-                  const r = await fetch(API+'/coach/weekly_review',{method:'POST'});
-                  const d = await r.json();
-                  setWeeklyResp(d.response||'');
-                } catch(e){ setWeeklyResp('Error: '+e.message); }
-                setGenWeekly(false);
-              }} disabled={genWeekly}>
-                {genWeekly ? 'Generating…' : 'Generate This Week\'s Review'}
-              </button>
+              <div style={{...S.hdr,marginBottom:4}}>Weekly Review</div>
+              <div style={{fontSize:11,color:'#5a6478',marginBottom:12,fontFamily:'Space Mono'}}>
+                Covers trades closed in the past 7 days
+              </div>
+              <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
+                <button style={S.btn()} onClick={async()=>{
+                  setGenWeekly('prompt'); setWeeklyResp('');
+                  try {
+                    const d = await api('/coach/weekly_review_prompt');
+                    setWeeklyResp(d.prompt||'');
+                  } catch(e){ setWeeklyResp('Error: '+e.message); }
+                  setGenWeekly(false);
+                }} disabled={genWeekly}>
+                  {genWeekly==='prompt' ? 'Loading…' : 'Get Prompt'}
+                </button>
+                <button style={S.btn(true)} onClick={async()=>{
+                  setGenWeekly('ai'); setWeeklyResp('');
+                  try {
+                    const r = await fetch(API+'/coach/weekly_review',{method:'POST'});
+                    const d = await r.json();
+                    setWeeklyResp(d.response||'');
+                  } catch(e){ setWeeklyResp('Error: '+e.message); }
+                  setGenWeekly(false);
+                }} disabled={!!genWeekly}>
+                  {genWeekly==='ai' ? 'Generating…' : 'Generate with AI'}
+                </button>
+              </div>
               {weeklyResp && (
-                <div style={{marginTop:12,padding:'12px',background:'#0f1318',borderRadius:6,
-                  fontSize:12,lineHeight:1.8,color:'#c8d0e0',whiteSpace:'pre-wrap',fontFamily:'Space Grotesk'}}>
-                  {weeklyResp}
-                </div>
+                <textarea value={weeklyResp} readOnly rows={10} style={{resize:'vertical',fontSize:11}}/>
               )}
             </div>
 

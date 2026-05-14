@@ -657,8 +657,8 @@ def get_maemfe_analysis(currency: str = "USD"):
 
 # ── Weekly review ─────────────────────────────────────────────────────────────
 
-@app.post("/api/coach/weekly_review")
-def generate_weekly_review():
+def _build_weekly_prompt() -> str | None:
+    """Build the weekly review prompt. Returns None if no trades this week."""
     from datetime import timedelta
     _, closed_all = build_portfolio()
     closed = [t for t in closed_all if t.symbol not in EXCLUDED_SYMBOLS]
@@ -668,7 +668,7 @@ def generate_weekly_review():
     week_trades = [t for t in closed if t.exit_date >= week_start]
 
     if not week_trades:
-        return {"response": "No trades closed in the past 7 days — nothing to review."}
+        return None
 
     m = summary_dict(week_trades)
     trade_lines = "\n".join(
@@ -678,7 +678,7 @@ def generate_weekly_review():
         for t in sorted(week_trades, key=lambda t: t.exit_date)
     )
 
-    prompt = f"""You are a professional trading coach reviewing a trader's week.
+    return f"""You are a professional trading coach reviewing a trader's week.
 
 === THIS WEEK ({week_start} to {today}) ===
 Trades: {m['total_trades']} | Win rate: {m['win_rate']:.1%} | Profit factor: {m['profit_factor']:.2f}
@@ -694,6 +694,21 @@ Write a concise weekly review with these 4 sections:
 
 Keep each point to 2-3 sentences. Be specific and direct."""
 
+
+@app.get("/api/coach/weekly_review_prompt")
+def get_weekly_review_prompt():
+    """Return the raw prompt text — copy and paste into any LLM."""
+    prompt = _build_weekly_prompt()
+    if prompt is None:
+        return {"prompt": "No trades closed in the past 7 days — nothing to review."}
+    return {"prompt": prompt}
+
+
+@app.post("/api/coach/weekly_review")
+def generate_weekly_review():
+    prompt = _build_weekly_prompt()
+    if prompt is None:
+        return {"response": "No trades closed in the past 7 days — nothing to review."}
     try:
         import anthropic
         client = anthropic.Anthropic()
