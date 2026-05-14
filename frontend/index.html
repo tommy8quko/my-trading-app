@@ -538,29 +538,41 @@ function ResizeHandle({dir, active, onMouseDown}) {
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 function Dashboard() {
-  const [data,     setData]     = React.useState(null);
-  const [metrics,  setMetrics]  = React.useState(null);
-  const [currency, setCurrency] = React.useState('USD');
-  const [loading,  setLoading]  = React.useState(true);
-  const [spyData,  setSpyData]  = React.useState([]);
-  const [posSort,  setPosSort]  = React.useState({col:null, dir:'asc'});
+  const [data,         setData]         = React.useState(null);
+  const [metricsCache, setMetricsCache] = React.useState({});
+  const [currency,     setCurrency]     = React.useState('USD');
+  const [loading,      setLoading]      = React.useState(true);
+  const [spyData,      setSpyData]      = React.useState([]);
+  const [posSort,      setPosSort]      = React.useState({col:null, dir:'asc'});
 
-  const load = async (ccy) => {
-    setLoading(true);
-    const [p, m] = await Promise.all([api('/portfolio'), api(`/metrics?currency=${ccy}`)]);
-    setData(p); setMetrics(m); setLoading(false);
-    if (m.equity_curve && m.equity_curve.length) {
-      const from = m.equity_curve[0].date;
-      api(`/stats/spy?from_date=${from}`).then(setSpyData).catch(()=>{});
-    }
-  };
-  React.useEffect(()=>{ load(currency); }, [currency]);
+  React.useEffect(()=>{
+    (async () => {
+      setLoading(true);
+      const [p, usdM] = await Promise.all([api('/portfolio'), api('/metrics?currency=USD')]);
+      setData(p);
+      setMetricsCache({USD: usdM});
+      setLoading(false);
+      // Background: load all other currencies and ALL so switching is instant
+      const others = (usdM.currencies || []).filter(c => c !== 'USD');
+      [...others, 'ALL'].forEach(ccy => {
+        api(`/metrics?currency=${ccy}`)
+          .then(m => setMetricsCache(prev => ({...prev, [ccy]: m})))
+          .catch(()=>{});
+      });
+      if (usdM.equity_curve?.length) {
+        api(`/stats/spy?from_date=${usdM.equity_curve[0].date}`).then(setSpyData).catch(()=>{});
+      }
+    })();
+  }, []);
 
-  if (loading) return <Spinner/>;
+  const metrics = metricsCache[currency];
+  if (loading || !data || !metrics) return <Spinner/>;
 
+  // For ALL view, trades are USD-denominated; show 'USD' as the unit label
+  const displayCcy = currency === 'ALL' ? 'USD' : currency;
   const currencies = metrics.currencies || ['USD'];
   const kpis = [
-    {label:'Total P&L',       val:`${fmt(metrics.total_pnl,2)} ${currency}`,                          color:pnlColor(metrics.total_pnl)},
+    {label:'Total P&L',       val:`${fmt(metrics.total_pnl,2)} ${displayCcy}`,                       color:pnlColor(metrics.total_pnl)},
     {label:'Win Rate',        val:pct(metrics.win_rate),                                               color:metrics.win_rate>=0.4?GREEN:RED},
     {label:'Max Drawdown',    val:fmt(metrics.max_drawdown,2),                                         color:RED},
     {label:'Profit Factor',   val:fmt(metrics.profit_factor,2),                                        color:metrics.profit_factor>=1?GREEN:RED},
@@ -577,13 +589,15 @@ function Dashboard() {
   ];
 
   const EXCL = new Set(['SGOV','BOXX']);
-  const closedForCurrency = data ? (data.closed_trades||[]).filter(t=>t.currency===currency&&!EXCL.has(t.symbol)) : [];
+  const closedForCurrency = data ? (data.closed_trades||[]).filter(t=>
+    (currency === 'ALL' || t.currency === currency) && !EXCL.has(t.symbol)
+  ) : [];
 
   return (
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
 
       {/* ── Metric Strip ─────────────────────────────────────────────────── */}
-      <MetricStrip metrics={metrics} currency={currency}/>
+      <MetricStrip metrics={metrics} currency={displayCcy}/>
 
       {/* ── 3-column top section ─────────────────────────────────────────── */}
       <div className="dash-top" style={{flex:3,display:'flex',overflow:'hidden',minHeight:0}}>

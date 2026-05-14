@@ -20,6 +20,9 @@ from db.client import get_supabase
 # Symbols excluded from all metrics/coach (cash-parking instruments, not trades)
 EXCLUDED_SYMBOLS = {"SGOV", "BOXX"}
 
+# FX rate used to convert HKD → USD in the "ALL" combined view
+_FX_HKD_USD = 7.8
+
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -154,13 +157,30 @@ def get_portfolio():
 
 @app.get("/api/metrics")
 def get_metrics(currency: str = "USD"):
+    import copy
     open_pos, closed = build_portfolio()
-    filtered = [t for t in closed if t.currency == currency and t.symbol not in EXCLUDED_SYMBOLS]
-    m = summary_dict(filtered) if filtered else {}
     pending = len(fetch_pending(limit=200))
-    open_filtered = [p for p in open_pos if p.currency == currency]
-    prices = _fetch_prices([(p.symbol, p.exchange) for p in open_filtered]) if open_filtered else {}
-    cum = equity_curve_full(filtered, open_filtered, prices)
+    src_currencies = sorted({t.currency for t in closed}) if closed else ["USD"]
+    currencies_out = src_currencies + (["ALL"] if len(src_currencies) > 1 else [])
+
+    if currency == "ALL":
+        # Convert non-USD trades to USD at the fixed FX rate, then compute combined metrics
+        def _to_usd(t):
+            if t.currency == "USD":
+                return t
+            tc = copy.copy(t)
+            tc.realized_pnl = t.realized_pnl / _FX_HKD_USD
+            return tc
+        filtered = [_to_usd(t) for t in closed if t.symbol not in EXCLUDED_SYMBOLS]
+        # Equity curve uses only closed trades (open-position unrealized P&L omitted for ALL)
+        cum = equity_curve_full(filtered, [], {})
+    else:
+        filtered = [t for t in closed if t.currency == currency and t.symbol not in EXCLUDED_SYMBOLS]
+        open_filtered = [p for p in open_pos if p.currency == currency]
+        prices = _fetch_prices([(p.symbol, p.exchange) for p in open_filtered]) if open_filtered else {}
+        cum = equity_curve_full(filtered, open_filtered, prices)
+
+    m = summary_dict(filtered) if filtered else {}
     return {
         "total_pnl":           round(m.get("total_pnl", 0), 2),
         "win_rate":            round(m.get("win_rate", 0), 4),
@@ -178,7 +198,7 @@ def get_metrics(currency: str = "USD"):
         "avg_hold_winners":    m.get("avg_hold_winners", 0),
         "avg_hold_losers":     m.get("avg_hold_losers", 0),
         "equity_curve":        [{"date": str(d), "pnl": round(v, 2)} for d, v in cum],
-        "currencies":          sorted({t.currency for t in closed}) if closed else ["USD"],
+        "currencies":          currencies_out,
     }
 
 
