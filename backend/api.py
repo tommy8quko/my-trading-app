@@ -462,63 +462,69 @@ def generate_coach(req: CoachRequest):
     winners = [t for t in closed if t.realized_pnl > 0]
     losers  = [t for t in closed if t.realized_pnl <= 0]
 
-    # All trades table
+    # All trades table — include currency so AI knows USD vs HKD
     trade_lines = "\n".join(
-        f"{t.symbol} {t.direction} | {t.entry_date}→{t.exit_date} "
+        f"{t.symbol}({t.currency}) {t.direction} | {t.entry_date}→{t.exit_date} "
         f"| hold={(t.exit_date-t.entry_date).days}d "
         f"| entry={t.avg_entry:.4f} exit={t.avg_exit:.4f} "
-        f"| pnl={t.realized_pnl:.2f} | R={f'{t.r_multiple:.2f}' if t.r_multiple is not None else 'N/A'}"
+        f"| pnl={t.realized_pnl:.2f}{t.currency} | R={f'{t.r_multiple:.2f}' if t.r_multiple is not None else 'N/A'}"
         for t in sorted_trades
     )
 
-    # Best / worst 5 by R (fall back to PnL)
-    r_trades = [t for t in closed if t.r_multiple is not None]
-    rank_key = (lambda t: t.r_multiple) if r_trades else (lambda t: t.realized_pnl)
-    rank_set  = r_trades if r_trades else closed
-    best5  = sorted(rank_set, key=rank_key, reverse=True)[:5]
-    worst5 = sorted(rank_set, key=rank_key)[:5]
+    # Per-currency summary metrics
+    currencies = sorted({t.currency for t in closed})
     def _trade_str(t):
-        return f"{t.symbol} {t.direction} {t.exit_date} PnL={t.realized_pnl:.2f} R={t.r_multiple or 'N/A'}"
+        return f"{t.symbol}({t.currency}) {t.direction} {t.exit_date} PnL={t.realized_pnl:.2f}{t.currency} R={t.r_multiple or 'N/A'}"
 
-    # Symbol performance
-    sym_pnl: dict[str, list[float]] = {}
-    for t in closed:
-        sym_pnl.setdefault(t.symbol, []).append(t.realized_pnl)
-    sym_summary = "\n".join(
-        f"  {sym}: {len(pnls)} trades, total={sum(pnls):.2f}, win%={100*sum(1 for p in pnls if p>0)/len(pnls):.0f}%"
-        for sym, pnls in sorted(sym_pnl.items(), key=lambda x: sum(x[1]), reverse=True)
-    )
+    ccy_sections = []
+    for ccy in currencies:
+        ccy_trades = [t for t in closed if t.currency == ccy]
+        cm = summary_dict(ccy_trades)
+        r_trades = [t for t in ccy_trades if t.r_multiple is not None]
+        rank_key = (lambda t: t.r_multiple) if r_trades else (lambda t: t.realized_pnl)
+        rank_set = r_trades if r_trades else ccy_trades
+        best5  = sorted(rank_set, key=rank_key, reverse=True)[:5]
+        worst5 = sorted(rank_set, key=rank_key)[:5]
+        sym_pnl: dict[str, list[float]] = {}
+        for t in ccy_trades:
+            sym_pnl.setdefault(t.symbol, []).append(t.realized_pnl)
+        sym_lines = "\n".join(
+            f"  {sym}: {len(pnls)} trades, total={sum(pnls):.2f}{ccy}, win%={100*sum(1 for p in pnls if p>0)/len(pnls):.0f}%"
+            for sym, pnls in sorted(sym_pnl.items(), key=lambda x: sum(x[1]), reverse=True)
+        )
+        ccy_sections.append(f"""
+--- {ccy} TRADES ({len(ccy_trades)} trades, US stocks use USD / HK stocks use HKD) ---
+Win rate: {(cm['win_rate'] or 0):.1%} | Profit factor: {(cm['profit_factor'] or 0):.2f} | Expectancy: {(cm['expectancy_r'] or 0):.2f}R
+Avg win: {cm['avg_win']:.2f}{ccy} | Avg loss: {cm['avg_loss']:.2f}{ccy} | Max drawdown: {cm['max_drawdown']:.2f}{ccy}
+Avg hold winners: {cm['avg_hold_winners']}d | Avg hold losers: {cm['avg_hold_losers']}d
+
+Best 5: {' | '.join(_trade_str(t) for t in best5)}
+Worst 5: {' | '.join(_trade_str(t) for t in worst5)}
+
+By symbol:
+{sym_lines}""")
 
     streak = m.get("current_streak", {})
     focus_text = FOCUS_INSTRUCTIONS.get(req.focus, FOCUS_INSTRUCTIONS["general"])
 
     prompt = f"""You are a professional quantitative trading performance analyst reviewing a trader's complete history.
+Note: this trader trades both US stocks (P&L in USD) and HK stocks (P&L in HKD). These are separate currencies — do not add them together.
 
 FOCUS: {focus_text}
 
-=== SUMMARY METRICS ===
-Trades: {m['total_trades']} | Win rate: {(m['win_rate'] or 0):.1%} | Profit factor: {(m['profit_factor'] or 0):.2f}
-Expectancy: {(m['expectancy_r'] or 0):.2f}R | R/R ratio: {(m['rr_ratio'] or 0):.2f}
-Avg win: {m['avg_win']:.2f} | Avg loss: {m['avg_loss']:.2f} | Max drawdown: {m['max_drawdown']:.2f}
-Current streak: {streak.get('count',0)}{streak.get('type','')} | Best win streak: {m['longest_win_streak']} | Worst loss streak: {m['longest_loss_streak']}
-Avg hold winners: {m['avg_hold_winners']}d | Avg hold losers: {m['avg_hold_losers']}d
+=== OVERALL METRICS (all currencies combined for streak/pattern analysis) ===
+Total trades: {m['total_trades']} | Current streak: {streak.get('count',0)}{streak.get('type','')} | Best win streak: {m['longest_win_streak']} | Worst loss streak: {m['longest_loss_streak']}
 
-=== BEST 5 TRADES ===
-{chr(10).join(_trade_str(t) for t in best5)}
+=== METRICS BY CURRENCY ===
+{''.join(ccy_sections)}
 
-=== WORST 5 TRADES ===
-{chr(10).join(_trade_str(t) for t in worst5)}
-
-=== PERFORMANCE BY SYMBOL ===
-{sym_summary}
-
-=== ALL TRADES (chronological) ===
+=== ALL TRADES (chronological, currency shown per trade) ===
 {trade_lines}
 
 === TRADER NOTES ===
 {req.notes or 'None provided'}
 
-Respond with 4–6 specific, data-driven insights. Reference actual numbers from the data. End with 3 concrete actions the trader should take next week."""
+Respond with 4–6 specific, data-driven insights. Reference actual numbers and currencies. Analyse USD and HKD performance separately where relevant. End with 3 concrete actions the trader should take next week."""
 
     try:
         import anthropic
