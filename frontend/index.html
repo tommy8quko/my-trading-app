@@ -337,7 +337,7 @@ function Dashboard() {
   const currencies = metrics.currencies || ['USD'];
   const kpis = [
     {label:'Total P&L',     val:`${fmt(metrics.total_pnl,2)} ${currency}`, color:pnlColor(metrics.total_pnl)},
-    {label:'Win Rate',      val:pct(metrics.win_rate),                     color:metrics.win_rate>=0.5?GREEN:RED},
+    {label:'Win Rate',      val:pct(metrics.win_rate),                     color:metrics.win_rate>=0.4?GREEN:RED},
     {label:'Max Drawdown',  val:fmt(metrics.max_drawdown,2),               color:RED},
     {label:'Profit Factor', val:fmt(metrics.profit_factor,2),              color:metrics.profit_factor>=1?GREEN:RED},
     {label:'Expectancy',    val:metrics.expectancy_r!=null ? fmt(metrics.expectancy_r,2)+'R' : '—', color:metrics.expectancy_r>0?GREEN:RED},
