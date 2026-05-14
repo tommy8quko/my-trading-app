@@ -97,7 +97,7 @@ function TopNav({active, onNav}) {
     <div style={{height:44,display:'flex',alignItems:'center',background:'#090c10',
       borderBottom:'1px solid rgba(255,255,255,0.06)',flexShrink:0,padding:'0 20px'}}>
       <div style={{fontSize:13,fontWeight:700,color:'#c8d0e0',letterSpacing:'-0.01em',marginRight:32,flexShrink:0}}>TJ</div>
-      <div style={{flex:1,display:'flex',alignItems:'stretch',justifyContent:'center',height:44}}>
+      <div style={{flex:1,display:'flex',alignItems:'stretch',justifyContent:'flex-start',height:44}}>
         {NAV.map(n=>(
           <button key={n.id} onClick={()=>onNav(n.id)} style={{
             padding:'0 18px',background:'transparent',border:'none',
@@ -205,19 +205,17 @@ function PanelB({metrics}) {
 // ── Panel C: Diverging P&L bar chart by symbol ────────────────────────────────
 function PanelC({trades}) {
   if (!trades||!trades.length) return <div style={{flex:1}}/>;
-  const bySymbol={};
-  trades.forEach(t=>{bySymbol[t.symbol]=(bySymbol[t.symbol]||0)+t.pnl;});
-  const entries=Object.entries(bySymbol).map(([sym,pnl])=>({sym,pnl})).sort((a,b)=>b.pnl-a.pnl);
-  const maxAbs=Math.max(...entries.map(e=>Math.abs(e.pnl)),1);
+  const recent=[...trades].sort((a,b)=>b.exit_date.localeCompare(a.exit_date)).slice(0,10);
+  const maxAbs=Math.max(...recent.map(t=>Math.abs(t.pnl)),1);
   return (
     <div style={{flex:1,overflow:'hidden',padding:'10px 12px',display:'flex',flexDirection:'column',minHeight:0}}>
-      <div style={{...S.hdr,marginBottom:8}}>P&L by Symbol</div>
+      <div style={{...S.hdr,marginBottom:8}}>Recent 10 Trades</div>
       <div style={{flex:1,overflow:'auto'}}>
-        {entries.map(({sym,pnl})=>{
-          const ratio=Math.abs(pnl)/maxAbs, isPos=pnl>=0;
+        {recent.map((t,i)=>{
+          const ratio=Math.abs(t.pnl)/maxAbs, isPos=t.pnl>=0;
           return (
-            <div key={sym} style={{display:'flex',alignItems:'center',marginBottom:5,gap:4}}>
-              <div style={{width:44,flexShrink:0,textAlign:'right',fontFamily:'Space Mono',fontSize:9,color:'#09CDDF',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sym}</div>
+            <div key={i} style={{display:'flex',alignItems:'center',marginBottom:5,gap:4}}>
+              <div style={{width:44,flexShrink:0,textAlign:'right',fontFamily:'Space Mono',fontSize:9,color:'#09CDDF',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.symbol}</div>
               <div style={{flex:1,display:'flex',alignItems:'center',height:12}}>
                 <div style={{flex:1,display:'flex',justifyContent:'flex-end',height:'100%'}}>
                   {!isPos&&<div style={{height:'100%',width:`${ratio*100}%`,background:`${RED}99`,borderRadius:'3px 0 0 3px'}}/>}
@@ -417,12 +415,6 @@ function EquityCurve({data, trades=[], spyData=[]}) {
           {/* grid lines */}
           {yTicks.map((v,i) => (
             <line key={i} x1={PL} y1={py(v)} x2={W-PR} y2={py(v)} stroke="rgba(255,255,255,0.04)" strokeWidth="1"/>
-          ))}
-
-          {/* drawdown shading */}
-          {ddRects.map((r,i) => (
-            <rect key={i} x={px(r.from)} y={PT} width={Math.max(1,px(r.to)-px(r.from))} height={ch}
-              fill="rgba(240,91,107,0.07)"/>
           ))}
 
           {/* zero line */}
