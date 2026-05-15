@@ -2461,10 +2461,24 @@ function CalcPanel({onClose}) {
           value={target} onChange={e=>setTarget(e.target.value)}/>
       </CalcRow>
       <CalcRow label="Stop Loss">
-        {mode==='stop'
-          ? <div style={{...solvedSt,padding:'5px 8px',borderRadius:4,fontSize:12}}>{solvedStop!=null?solvedStop:'—'}</div>
-          : <input style={inSt} type="number" step="any" placeholder="e.g. 144.00"
-              value={stop} onChange={e=>setStop(e.target.value)}/>}
+        {(() => {
+          const shownStop = mode==='stop' ? solvedStop : (hasStop ? S : null);
+          const stopPct = (hasEntry && shownStop!=null && E>0)
+            ? round2(Math.abs(E - shownStop) / E * 100) : null;
+          return (
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              {mode==='stop'
+                ? <div style={{...solvedSt,padding:'5px 8px',borderRadius:4,fontSize:12,flex:1}}>{solvedStop!=null?solvedStop:'—'}</div>
+                : <input style={{...inSt,flex:1}} type="number" step="any" placeholder="e.g. 144.00"
+                    value={stop} onChange={e=>setStop(e.target.value)}/>}
+              {stopPct!=null && (
+                <span style={{fontSize:10,fontFamily:'Space Mono',color:'#a0536a',whiteSpace:'nowrap',flexShrink:0}}>
+                  {stopPct}%
+                </span>
+              )}
+            </div>
+          );
+        })()}
       </CalcRow>
       <CalcRow label="Risk %">
         {mode==='risk'
