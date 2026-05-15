@@ -55,6 +55,13 @@ class IBKRAdapter(BrokerAdapter):
         # Build a unique ID from symbol + date + time + price instead.
         unique_id = f"IBKR_{symbol}_{order_date}_{order_time}_{price}_{qty}"
 
+        # IBKR Pro: USD $0.005/share for US stocks; HK stocks ~0.05% of trade value min HKD 18
+        if currency == "HKD":
+            trade_value = price * qty
+            fees = max(trade_value * 0.0005, 18.0)
+        else:
+            fees = round(qty * 0.005, 4)
+
         return ParsedOrder(
             broker_short_code=cls.short_code,
             external_order_id=unique_id,
@@ -64,6 +71,7 @@ class IBKRAdapter(BrokerAdapter):
             currency=currency,
             price=price,
             quantity=qty,
+            fees=fees,
             order_date=order_date,
             order_time=order_time,
             raw_data={"subject": subject},

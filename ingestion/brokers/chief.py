@@ -186,6 +186,15 @@ class ChiefAdapter(BrokerAdapter):
         order_date: date = received_at.date() if received_at else date.today()
         order_time = received_at.time() if received_at else None
 
+        # Chief commission schedule:
+        # HK stocks: 0.0668% of trade value, min HKD 20
+        # US stocks: USD $0.008/share, min USD 0.99
+        trade_value = price * quantity
+        if currency == "HKD":
+            fees = max(trade_value * 0.000668, 20.0)
+        else:
+            fees = max(quantity * 0.008, 0.99)
+
         return ParsedOrder(
             broker_short_code=cls.short_code,
             external_order_id=ref_no or f"CHIEF_{symbol}_{order_date}_{quantity}",
@@ -195,6 +204,7 @@ class ChiefAdapter(BrokerAdapter):
             currency=currency,
             price=price,
             quantity=quantity,
+            fees=round(fees, 4),
             order_date=order_date,
             order_time=order_time,
             raw_data={"subject": subject, "body_kv": kv},
