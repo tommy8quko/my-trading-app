@@ -115,7 +115,11 @@ function TopNav({active, onNav}) {
   return (
     <div style={{height:44,display:'flex',alignItems:'center',background:'#090c10',
       borderBottom:'1px solid rgba(255,255,255,0.06)',flexShrink:0,padding:'0 20px'}}>
-      <div style={{fontSize:13,fontWeight:700,color:'#c8d0e0',letterSpacing:'-0.01em',marginRight:32,flexShrink:0}}>TJ</div>
+      <div style={{display:'flex',alignItems:'center',marginRight:32,flexShrink:0}}>
+        <img src="/static/Chartingwoof logo (Big Head).png" alt="ChartingWoof"
+          style={{height:30,opacity:0.9,filter:'invert(1) brightness(0.8)'}}
+          onError={e=>e.target.style.display='none'}/>
+      </div>
       <div style={{flex:1,display:'flex',alignItems:'stretch',justifyContent:'flex-start',height:44}}>
         {NAV.map(n=>(
           <button key={n.id} onClick={()=>onNav(n.id)} style={{
@@ -127,13 +131,9 @@ function TopNav({active, onNav}) {
           }}>{n.label}</button>
         ))}
       </div>
-      <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
-        <img src="/static/Chartingwoof logo.png" alt="" style={{height:22,opacity:0.85,filter:'invert(1) brightness(0.75)'}}
-          onError={e=>e.target.style.display='none'}/>
-        <span style={{fontSize:11,color:'#3a4258',fontFamily:'Space Mono',letterSpacing:'.06em'}}>
-          {new Date().getFullYear()}
-        </span>
-      </div>
+      <span style={{fontSize:11,color:'#3a4258',fontFamily:'Space Mono',letterSpacing:'.06em',flexShrink:0}}>
+        {new Date().getFullYear()}
+      </span>
     </div>
   );
 }
