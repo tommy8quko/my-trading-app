@@ -1702,10 +1702,11 @@ function ReviewQueue({pending, onRefresh}) {
 }
 
 function ReviewItem({item, onRefresh}) {
-  const [open, setOpen] = React.useState(false);
-  const [busy, setBusy] = React.useState(false);
-  const [err, setErr] = React.useState('');
-  const [stopLoss, setStopLoss] = React.useState(item.normalized?.stop_loss_at_entry || '');
+  const [open,         setOpen]         = React.useState(false);
+  const [busy,         setBusy]         = React.useState(false);
+  const [err,          setErr]          = React.useState('');
+  const [stopLoss,     setStopLoss]     = React.useState(item.normalized?.stop_loss_at_entry || '');
+  const [closedTrades, setClosedTrades] = React.useState(null);
 
   const act = async (action) => {
     setBusy(true); setErr('');
@@ -1715,8 +1716,14 @@ function ReviewItem({item, onRefresh}) {
         const sl = parseFloat(stopLoss);
         opts.body = JSON.stringify({stop_loss: sl > 0 ? sl : null});
       }
-      await api(`/review/${item.id}/${action}`, opts);
-      await onRefresh();
+      const res = await api(`/review/${item.id}/${action}`, opts);
+      if (action === 'approve' && res.closed_trades?.length) {
+        setClosedTrades(res.closed_trades);
+        setBusy(false);
+        // onRefresh deferred — modal's close button will trigger it
+      } else {
+        await onRefresh();
+      }
     } catch(e) {
       setErr(e.message || String(e));
       setBusy(false);
@@ -1772,12 +1779,92 @@ function ReviewItem({item, onRefresh}) {
         </div>
       )}
     </div>
+    {closedTrades && (
+      <OutcomeModal
+        trades={closedTrades}
+        onClose={async () => { setClosedTrades(null); await onRefresh(); }}
+      />
+    )}
+    </>
   );
 }
 
 // ── Spinner ───────────────────────────────────────────────────────────────────
 function Spinner() {
   return <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',color:'#5a6478',fontSize:11,fontFamily:'Space Mono',letterSpacing:'.08em'}}>LOADING…</div>;
+}
+
+// ── Outcome Modal (shown after approval closes trades) ────────────────────────
+function OutcomeModal({trades, onClose}) {
+  const [reasons, setReasons] = React.useState({});
+  const [saving,  setSaving]  = React.useState(false);
+  const setReason = (key, val) => setReasons(prev => ({...prev, [key]: val}));
+
+  const save = async () => {
+    setSaving(true);
+    await Promise.all(trades.map(t => {
+      const key = `${t.symbol}|${t.entry_date}`;
+      const reason = reasons[key]?.trim();
+      if (!reason) return Promise.resolve();
+      return api('/trades/review', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({symbol: t.symbol, entry_date: t.entry_date, outcome_reason: reason}),
+      }).catch(()=>{});
+    }));
+    setSaving(false);
+    onClose();
+  };
+
+  return (
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+      <div style={{background:'#0f1318',border:'1px solid rgba(255,255,255,0.1)',borderRadius:10,
+        padding:'24px',width:'min(480px,100%)',maxHeight:'80vh',overflowY:'auto',boxShadow:'0 24px 64px rgba(0,0,0,0.6)'}}>
+        <div style={{fontFamily:'Space Grotesk',fontWeight:700,color:'#c8d0e0',fontSize:15,marginBottom:4}}>
+          {trades.length === 1 ? 'Trade Closed' : `${trades.length} Trades Closed`}
+        </div>
+        <div style={{fontFamily:'Space Mono',fontSize:10,color:'#5a6478',marginBottom:20,letterSpacing:'.04em'}}>
+          Add an outcome reason for each (optional — skip to save later)
+        </div>
+
+        {trades.map(t => {
+          const key = `${t.symbol}|${t.entry_date}`;
+          const isWin = t.pnl >= 0;
+          return (
+            <div key={key} style={{marginBottom:12,padding:'12px 14px',background:'rgba(255,255,255,0.03)',
+              borderRadius:6,border:`1px solid ${isWin?'rgba(5,150,144,0.2)':'rgba(206,49,75,0.2)'}`}}>
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+                <span style={S.ticker}>{t.symbol}</span>
+                <span style={{fontSize:9,fontFamily:'Space Mono',fontWeight:700,
+                  color:t.direction==='LONG'?'#088885':'#F96E8F'}}>{t.direction}</span>
+                <span style={{fontSize:10,color:'#5a6478',fontFamily:'Space Mono'}}>{t.exit_date}</span>
+                <span style={{fontFamily:'Space Mono',fontSize:13,fontWeight:700,
+                  color:isWin?GREEN:RED,marginLeft:'auto'}}>
+                  {isWin?'+':''}{fmt(t.pnl,2)} {t.currency}
+                </span>
+              </div>
+              <textarea
+                placeholder="What happened? Why did you exit?"
+                value={reasons[key]||''}
+                onChange={e=>setReason(key, e.target.value)}
+                rows={2}
+                style={{width:'100%',background:'#0a0d12',border:'1px solid rgba(255,255,255,0.1)',
+                  borderRadius:4,color:'#c8d0e0',fontSize:11,fontFamily:'Space Mono',
+                  padding:'6px 8px',resize:'vertical',outline:'none',boxSizing:'border-box'}}
+              />
+            </div>
+          );
+        })}
+
+        <div style={{display:'flex',gap:8,marginTop:8}}>
+          <button style={S.btn(true)} onClick={save} disabled={saving}>
+            {saving ? 'Saving…' : 'Save & Close'}
+          </button>
+          <button style={S.btn()} onClick={onClose}>Skip</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ── Diverging bar chart helpers ───────────────────────────────────────────────

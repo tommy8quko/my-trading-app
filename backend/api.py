@@ -252,8 +252,23 @@ async def approve(queue_id: str, request: Request):
         notes = body.get("notes", "")
         sl = body.get("stop_loss")
         stop_loss = float(sl) if sl else None
+        _, closed_before = build_portfolio()
+        before_keys = {(t.symbol, str(t.entry_date), str(t.exit_date)) for t in closed_before}
         approve_item(queue_id, notes=notes, stop_loss=stop_loss)
-        return {"ok": True}
+        _, closed_after = build_portfolio()
+        new_closed = [
+            t for t in closed_after
+            if (t.symbol, str(t.entry_date), str(t.exit_date)) not in before_keys
+        ]
+        return {
+            "ok": True,
+            "closed_trades": [
+                {"symbol": t.symbol, "entry_date": str(t.entry_date),
+                 "exit_date": str(t.exit_date), "direction": t.direction,
+                 "pnl": round(t.realized_pnl, 2), "currency": t.currency}
+                for t in new_closed
+            ],
+        }
     except Exception as e:
         raise HTTPException(400, str(e))
 
