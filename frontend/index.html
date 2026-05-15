@@ -2060,7 +2060,7 @@ function CalendarPage() {
   const {y,m}=cur;
   const firstDow=new Date(y,m,1).getDay();
   const daysInMonth=new Date(y,m+1,0).getDate();
-  const monthLabel=new Date(y,m,1).toLocaleString('default',{month:'long',year:'numeric'});
+  const monthLabel=new Date(y,m,1).toLocaleString('en-US',{month:'long',year:'numeric'});
   const cells=[];
   for(let i=0;i<firstDow;i++) cells.push(null);
   for(let d=1;d<=daysInMonth;d++){
