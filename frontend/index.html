@@ -2315,6 +2315,15 @@ function CalendarPage({version, year}) {
 }
 
 // ── Position Sizing Calculator ────────────────────────────────────────────────
+function CalcRow({label, children}) {
+  return (
+    <div style={{marginBottom:8}}>
+      <div style={{...S.hdr,marginBottom:3}}>{label}</div>
+      {children}
+    </div>
+  );
+}
+
 function CalcPanel({onClose}) {
   const [dir,    setDir]    = React.useState('LONG');
   const [qty,    setQty]    = React.useState('');
@@ -2409,13 +2418,6 @@ function CalcPanel({onClose}) {
     color:active?(dir==='LONG'?GREEN:RED):'#5a6478',
   });
 
-  const Row = ({label, children}) => (
-    <div style={{marginBottom:8}}>
-      <div style={{...S.hdr,marginBottom:3}}>{label}</div>
-      {children}
-    </div>
-  );
-
   const panelStyle = {position:'fixed',top:pos.top,width:300,zIndex:1000,
     background:'#0f1318',border:'1px solid rgba(255,255,255,0.1)',
     borderRadius:10,boxShadow:'0 8px 32px rgba(0,0,0,0.6)',padding:'16px',
@@ -2444,32 +2446,32 @@ function CalcPanel({onClose}) {
       </div>
 
       {/* Fields in order: Qty, Entry, Target, Stop, Risk% */}
-      <Row label="Quantity">
+      <CalcRow label="Quantity">
         {mode==='qty'
           ? <div style={{...solvedSt,padding:'5px 8px',borderRadius:4,fontSize:12}}>{solvedQty!=null?solvedQty:'—'}</div>
           : <input style={inSt} type="number" step="1" min="1" placeholder="e.g. 500"
               value={qty} onChange={e=>setQty(e.target.value)}/>}
-      </Row>
-      <Row label="Entry Price">
+      </CalcRow>
+      <CalcRow label="Entry Price">
         <input style={inSt} type="number" step="any" placeholder="e.g. 148.50"
           value={entry} onChange={e=>setEntry(e.target.value)}/>
-      </Row>
-      <Row label="Target Price (optional)">
+      </CalcRow>
+      <CalcRow label="Target Price (optional)">
         <input style={inSt} type="number" step="any" placeholder="e.g. 155.00"
           value={target} onChange={e=>setTarget(e.target.value)}/>
-      </Row>
-      <Row label="Stop Loss">
+      </CalcRow>
+      <CalcRow label="Stop Loss">
         {mode==='stop'
           ? <div style={{...solvedSt,padding:'5px 8px',borderRadius:4,fontSize:12}}>{solvedStop!=null?solvedStop:'—'}</div>
           : <input style={inSt} type="number" step="any" placeholder="e.g. 144.00"
               value={stop} onChange={e=>setStop(e.target.value)}/>}
-      </Row>
-      <Row label="Risk %">
+      </CalcRow>
+      <CalcRow label="Risk %">
         {mode==='risk'
           ? <div style={{...solvedSt,padding:'5px 8px',borderRadius:4,fontSize:12}}>{solvedRisk!=null?solvedRisk+'%':'—'}</div>
           : <input style={inSt} type="number" step="any" placeholder="e.g. 0.5"
               value={riskPct} onChange={e=>setRiskPct(e.target.value)}/>}
-      </Row>
+      </CalcRow>
 
       {/* Results */}
       {(riskAmt!=null||notional!=null||rr!=null) && (
