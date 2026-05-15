@@ -705,6 +705,25 @@ function Dashboard() {
           {/* Metric strip aligned with equity curve */}
           <MetricStrip metrics={metrics} currency={displayCcy}/>
 
+          {/* Edge stats bar: Expectancy R | R/R | Profit Factor */}
+          {(() => {
+            const cells = [
+              {label:'Expectancy',    val: metrics.expectancy_r!=null ? fmt(metrics.expectancy_r,2)+'R' : '—', color: metrics.expectancy_r>0?GREEN:metrics.expectancy_r<0?RED:'#c8d0e0'},
+              {label:'R / R',         val: metrics.rr_ratio!=null ? fmt(metrics.rr_ratio,2)+' : 1' : '—',       color: metrics.rr_ratio>=1?GREEN:metrics.rr_ratio!=null?RED:'#c8d0e0'},
+              {label:'Profit Factor', val: fmt(metrics.profit_factor,2),                                        color: metrics.profit_factor>=1?GREEN:RED},
+            ];
+            return (
+              <div style={{display:'flex',flexShrink:0,borderBottom:'1px solid rgba(255,255,255,0.06)',background:'rgba(255,255,255,0.015)'}}>
+                {cells.map((c,i)=>(
+                  <div key={i} style={{flex:1,padding:'7px 20px',borderRight:i<cells.length-1?'1px solid rgba(255,255,255,0.06)':'none'}}>
+                    <div style={S.hdr}>{c.label}</div>
+                    <div style={{fontFamily:'Space Mono',fontWeight:700,fontSize:13,color:c.color}}>{c.val}</div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
           {/* Middle + right panels */}
           <div style={{flex:1,display:'flex',overflow:'hidden',minHeight:0}}>
 
