@@ -91,7 +91,7 @@ def max_drawdown(trades: list[ClosedTrade]) -> float:
 
 def cumulative_pnl(trades: list[ClosedTrade]) -> list[tuple[date, float]]:
     """Return [(exit_date, cumulative_pnl)] sorted by date."""
-    sorted_trades = sorted(trades, key=lambda t: (t.exit_date, t.symbol))
+    sorted_trades = sorted(trades, key=lambda t: (t.exit_date, t.exit_time or ''))
     cum = 0.0
     result = []
     for t in sorted_trades:
@@ -216,7 +216,7 @@ def current_streak(trades: list[ClosedTrade]) -> dict[str, Any]:
     """Return {'count': N, 'type': 'W'|'L'} for the most recent consecutive run."""
     if not trades:
         return {"count": 0, "type": None}
-    sorted_trades = sorted(trades, key=lambda t: (t.exit_date, t.symbol))
+    sorted_trades = sorted(trades, key=lambda t: (t.exit_date, t.exit_time or ''))
     last_type = "W" if sorted_trades[-1].realized_pnl > 0 else "L"
     count = 0
     for t in reversed(sorted_trades):
@@ -230,7 +230,7 @@ def current_streak(trades: list[ClosedTrade]) -> dict[str, Any]:
 
 def longest_win_streak(trades: list[ClosedTrade]) -> int:
     best, cur = 0, 0
-    for t in sorted(trades, key=lambda t: (t.exit_date, t.symbol)):
+    for t in sorted(trades, key=lambda t: (t.exit_date, t.exit_time or '')):
         if t.realized_pnl > 0:
             cur += 1
             best = max(best, cur)
@@ -241,7 +241,7 @@ def longest_win_streak(trades: list[ClosedTrade]) -> int:
 
 def longest_loss_streak(trades: list[ClosedTrade]) -> int:
     best, cur = 0, 0
-    for t in sorted(trades, key=lambda t: (t.exit_date, t.symbol)):
+    for t in sorted(trades, key=lambda t: (t.exit_date, t.exit_time or '')):
         if t.realized_pnl <= 0:
             cur += 1
             best = max(best, cur)

@@ -51,6 +51,7 @@ class ClosedTrade:
     realized_pnl: float     # in trade currency
     initial_stop: float | None
     r_multiple: float | None
+    exit_time: str | None = None  # HH:MM:SS from order_time of the closing order
 
 
 @dataclass
@@ -251,6 +252,7 @@ def build_portfolio() -> tuple[list[OpenPosition], list[ClosedTrade]]:
                     realized_pnl=realized_pnl,
                     initial_stop=initial_stop,
                     r_multiple=r_multiple,
+                    exit_time=o.get("order_time"),
                 ))
                 del open_positions[symbol]
                 position_meta.pop(symbol, None)
