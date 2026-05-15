@@ -626,7 +626,7 @@ function ResizeHandle({dir, active, onMouseDown}) {
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
-function Dashboard() {
+function Dashboard({version}) {
   const [data,         setData]         = React.useState(null);
   const [metricsCache, setMetricsCache] = React.useState({});
   const [currency,     setCurrency]     = React.useState('ALL');
@@ -701,7 +701,7 @@ function Dashboard() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [version]);
 
   const metrics = metricsCache[currency];
   if (loading) return <Spinner/>;
@@ -1109,13 +1109,13 @@ function ClosedTradeRow({t, idx}) {
 }
 
 // ── Journal ───────────────────────────────────────────────────────────────────
-function Journal() {
+function Journal({version}) {
   const [tab,        setTab]        = React.useState('Trade Log');
   const [data,       setData]       = React.useState(null);
   const [filter,     setFilter]     = React.useState('All');
   const [tradeSort,  setTradeSort]  = React.useState({col:'exit_date', dir:'desc'});
 
-  React.useEffect(()=>{ api('/portfolio').then(setData); }, []);
+  React.useEffect(()=>{ api('/portfolio').then(setData); }, [version]);
   if (!data) return <Spinner/>;
 
   const closed  = data.closed_trades;
@@ -1308,7 +1308,7 @@ function TradeCard({trade:t}) {
 }
 
 // ── Analysis ──────────────────────────────────────────────────────────────────
-function Analysis() {
+function Analysis({version}) {
   const [tab,          setTab]          = React.useState('Statistics');
   const [stats,        setStats]        = React.useState(null);
   const [setupTags,    setSetupTags]    = React.useState(null);
@@ -1330,7 +1330,7 @@ function Analysis() {
     api(`/stats/market_condition?currency=${ccy}`).then(setMktCond).catch(()=>setMktCond({}));
   };
 
-  React.useEffect(()=>{ loadStats(currency); }, [currency]);
+  React.useEffect(()=>{ loadStats(currency); }, [currency, version]);
 
   const [focus, setFocus] = React.useState('general');
   const FOCUS_OPTS = [
@@ -1679,7 +1679,7 @@ function HoldingTable({rows}) {
 }
 
 // ── Data ──────────────────────────────────────────────────────────────────────
-function DataPage() {
+function DataPage({onDataChange}) {
   const [tab,        setTab]        = React.useState('Import & Sync');
   const [since,      setSince]      = React.useState(new Date().toISOString().split('T')[0]);
   const [syncing,    setSyncing]    = React.useState(false);
@@ -1695,6 +1695,7 @@ function DataPage() {
     try {
       const r = await api('/sync/gmail',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({since})});
       setSyncResult(r);
+      onDataChange();
     } catch(e){ setSyncResult({error:e.message}); }
     setSyncing(false);
   };
@@ -1747,6 +1748,7 @@ function DataPage() {
                   const r = await fetch(API+'/import/file',{method:'POST',body:fd});
                   const d = await r.json();
                   alert(`Queued: ${d.queued}, Duplicates: ${d.duplicates}${d.errors.length?' Errors: '+d.errors.join(', '):''}`)
+                  onDataChange();
                 }}/>
               </label>
             </div>
@@ -1758,7 +1760,7 @@ function DataPage() {
         )}
 
         {tab==='Review Queue' && (
-          <ReviewQueue pending={pending} onRefresh={loadPending}/>
+          <ReviewQueue pending={pending} onRefresh={async()=>{ await loadPending(); onDataChange(); }}/>
         )}
       </div>
     </div>
@@ -2083,7 +2085,7 @@ function MarketConditionChart({data}) {
 }
 
 // ── Calendar page ─────────────────────────────────────────────────────────────
-function CalendarPage() {
+function CalendarPage({version}) {
   const [trades,      setTrades]      = React.useState(null);
   const [currency,    setCurrency]    = React.useState('ALL');
   const [currencies,  setCurrencies]  = React.useState(['USD']);
@@ -2095,7 +2097,7 @@ function CalendarPage() {
       setTrades(p.closed_trades||[]);
       setCurrencies(met.currencies||['USD']);
     });
-  },[]);
+  },[version]);
 
   if (!trades) return <Spinner/>;
 
@@ -2227,21 +2229,23 @@ function CalendarPage() {
 
 // ── App root ──────────────────────────────────────────────────────────────────
 function App() {
-  const [nav, setNav] = React.useState('dashboard');
+  const [nav,     setNav]     = React.useState('dashboard');
   const [mounted, setMounted] = React.useState(()=>new Set(['dashboard','journal','analysis','calendar','data']));
+  const [version, setVersion] = React.useState(0);
   const NAV_ITEMS = [{id:'dashboard',label:'Dash'},{id:'journal',label:'Journal'},{id:'analysis',label:'Analysis'},{id:'calendar',label:'Calendar'},{id:'data',label:'Data'}];
 
   const goNav = id => {
     setMounted(prev => { const n=new Set(prev); n.add(id); return n; });
     setNav(id);
   };
+  const bumpVersion = () => setVersion(v => v + 1);
 
   const TAB = {
-    dashboard: <Dashboard/>,
-    journal:   <Journal/>,
-    analysis:  <Analysis/>,
-    calendar:  <CalendarPage/>,
-    data:      <DataPage/>,
+    dashboard: <Dashboard version={version}/>,
+    journal:   <Journal version={version}/>,
+    analysis:  <Analysis version={version}/>,
+    calendar:  <CalendarPage version={version}/>,
+    data:      <DataPage onDataChange={bumpVersion}/>,
   };
 
   return (
