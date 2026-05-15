@@ -37,14 +37,32 @@ def _save_account_config(data: dict) -> None:
     with open(_ACCOUNT_CONFIG_PATH, "w") as f:
         json.dump(data, f, indent=2)
 
-def _account_totals(open_pos) -> dict[str, float]:
-    """Return total account value per currency (cash config + open position notionals)."""
+def _account_totals(open_pos, closed) -> dict[str, float]:
+    """Total account value per currency = snapshot cash + realized P&L since snapshot + open notionals."""
+    from datetime import date as _date
     cfg = _load_account_config()
+
+    def _since(key: str):
+        raw = cfg.get(key)
+        try:
+            return _date.fromisoformat(raw) if raw else _date.min
+        except ValueError:
+            return _date.min
+
+    hkd_since = _since("chief_hkd_as_of")
+    usd_since  = _since("chief_usd_as_of")  # applied to both Chief USD + IBKR USD pool
+
+    hkd_pnl = sum(t.realized_pnl for t in closed if t.currency == "HKD" and t.exit_date > hkd_since)
+    usd_pnl = sum(t.realized_pnl for t in closed if t.currency == "USD" and t.exit_date > usd_since)
+
+    usd_cash = cfg.get("chief_usd_cash", 0.0) + cfg.get("ibkr_cash_usd", 0.0) + usd_pnl
+    hkd_cash = cfg.get("chief_hkd_cash", 0.0) + hkd_pnl
+
     usd_notional = sum(p.avg_entry_price * p.total_quantity for p in open_pos if p.currency == "USD")
     hkd_notional = sum(p.avg_entry_price * p.total_quantity for p in open_pos if p.currency == "HKD")
     return {
-        "USD": round(cfg.get("ibkr_cash_usd", 0.0) + usd_notional, 2),
-        "HKD": round(cfg.get("chief_hkd_total", 0.0), 2),  # Chief total already includes positions
+        "USD": round(usd_cash + usd_notional, 2),
+        "HKD": round(hkd_cash + hkd_notional, 2),
     }
 
 app = FastAPI()
@@ -143,7 +161,7 @@ def get_portfolio():
         pct = (pnl / cost * 100) if cost else None
         return round(pnl, 2), round(pct, 2) if pct is not None else None
 
-    totals = _account_totals(open_pos)
+    totals = _account_totals(open_pos, closed)
     pos_rows = []
     for p in open_pos:
         price = prices.get(p.symbol)
@@ -282,12 +300,23 @@ def get_account_balances():
     return _load_account_config()
 
 class AccountBalances(BaseModel):
-    chief_hkd_total: float
+    chief_hkd_cash: float
+    chief_usd_cash: float
     ibkr_cash_usd: float
 
 @app.post("/api/account/balances")
 def set_account_balances(body: AccountBalances):
-    _save_account_config({"chief_hkd_total": body.chief_hkd_total, "ibkr_cash_usd": body.ibkr_cash_usd})
+    from datetime import date as _date
+    today = _date.today().isoformat()
+    _save_account_config({
+        "chief_hkd_cash": body.chief_hkd_cash,
+        "chief_hkd_as_of": today,
+        "chief_usd_cash": body.chief_usd_cash,
+        "chief_usd_as_of": today,
+        "ibkr_cash_usd": body.ibkr_cash_usd,
+        "ibkr_as_of": today,
+    })
+    _invalidate_portfolio()
     return {"ok": True}
 
 

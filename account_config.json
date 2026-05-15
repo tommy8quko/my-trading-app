@@ -1,4 +1,8 @@
 {
-  "chief_hkd_total": 271632.77,
-  "ibkr_cash_usd": 4130.0
+  "chief_hkd_cash": 271632.77,
+  "chief_hkd_as_of": "2026-05-15",
+  "chief_usd_cash": 124269.71,
+  "chief_usd_as_of": "2026-05-15",
+  "ibkr_cash_usd": 4130.0,
+  "ibkr_as_of": "2026-05-15"
 }
