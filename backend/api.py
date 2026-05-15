@@ -618,16 +618,23 @@ def get_setup_tag_stats(currency: str = "USD"):
         if trade:
             tag_trades[tag].append(trade)
 
+    def _pct(t):
+        if not t.avg_entry: return None
+        return (t.avg_exit - t.avg_entry) / t.avg_entry * 100 if t.direction == 'LONG' \
+               else (t.avg_entry - t.avg_exit) / t.avg_entry * 100
+
     result = {}
     for tag, trades in tag_trades.items():
         winners = [t for t in trades if t.realized_pnl > 0]
         r_trades = [t for t in trades if t.r_multiple is not None]
+        pct_vals = [p for t in trades for p in [_pct(t)] if p is not None]
         result[tag] = {
             "count": len(trades),
             "win_rate": round(len(winners) / len(trades), 4),
             "avg_r": round(sum(t.r_multiple for t in r_trades) / len(r_trades), 2) if r_trades else None,
             "total_pnl": round(sum(t.realized_pnl for t in trades), 2),
             "avg_pnl": round(sum(t.realized_pnl for t in trades) / len(trades), 2),
+            "avg_pct": round(sum(pct_vals) / len(pct_vals), 2) if pct_vals else None,
         }
     return result
 

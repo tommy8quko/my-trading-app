@@ -198,31 +198,49 @@ function DonutChart({fillRatio, displayVal, label, color, size=80}) {
   );
 }
 
-// ── Panel A: Avg Win / Avg Loss ───────────────────────────────────────────────
-function PanelA({metrics}) {
+// ── Setup Performance Panel (replaces Panel A + B) ────────────────────────────
+function SetupPerformancePanel({currency}) {
+  const [mode, setMode] = React.useState('$');
+  const [tags, setTags]   = React.useState(null);
+  const ccy = currency === 'ALL' ? 'USD' : currency;
+  React.useEffect(()=>{
+    setTags(null);
+    api(`/stats/setup_tags?currency=${ccy}`).then(setTags).catch(()=>setTags({}));
+  }, [ccy]);
+  const entries = tags ? Object.entries(tags) : [];
+  const rows = entries
+    .map(([tag,v])=>({
+      label: tag,
+      pnl: mode==='$' ? (v.avg_pnl||0) : (v.avg_pct||0),
+      sub: `${v.count}T`,
+    }))
+    .sort((a,b)=>b.pnl-a.pnl);
+  const fmtVal = mode==='$'
+    ? (pnl,isPos) => (isPos?'+':'')+fmt(pnl,0)
+    : (pnl,isPos) => (isPos?'+':'')+fmt(pnl,1)+'%';
   return (
-    <div style={{height:70,display:'flex',alignItems:'center',padding:'0 16px',flexShrink:0,
+    <div style={{flex:1,overflow:'hidden',padding:'10px 12px',display:'flex',flexDirection:'column',minHeight:0,
       borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
-      <div style={{flex:1,paddingRight:12,borderRight:'1px solid rgba(255,255,255,0.06)'}}>
-        <div style={S.hdr}>Avg Win</div>
-        <div style={{fontFamily:'Space Mono',fontWeight:700,fontSize:15,color:GREEN}}>+{fmt(metrics.avg_win,2)}</div>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8,flexShrink:0}}>
+        <div style={S.hdr}>Setup Performance</div>
+        <div style={{display:'flex',gap:2}}>
+          {['$','%'].map(m=>(
+            <button key={m} onClick={()=>setMode(m)} style={{
+              padding:'2px 8px',fontSize:9,borderRadius:3,border:'none',cursor:'pointer',
+              background:mode===m?`${ACCENT}22`:'rgba(255,255,255,0.04)',
+              color:mode===m?ACCENT:'#5a6478',fontFamily:'Space Mono',fontWeight:700,
+            }}>{m}</button>
+          ))}
+        </div>
       </div>
-      <div style={{flex:1,paddingLeft:12}}>
-        <div style={S.hdr}>Avg Loss</div>
-        <div style={{fontFamily:'Space Mono',fontWeight:700,fontSize:15,color:RED}}>{fmt(metrics.avg_loss,2)}</div>
+      <div style={{flex:1,overflowY:'auto',overflowX:'hidden'}}>
+        {!tags
+          ? <div style={{color:'#5a6478',fontSize:10,fontFamily:'Space Mono'}}>Loading…</div>
+          : rows.length===0
+            ? <div style={{color:'#5a6478',fontSize:10,fontFamily:'Space Mono'}}>No setup tags logged yet.</div>
+            : <DivergingBars rows={rows} labelWidth={52} fmtVal={fmtVal}/>
+        }
       </div>
-    </div>
-  );
-}
-
-// ── Panel B: Win Rate + Profit Factor donuts ──────────────────────────────────
-function PanelB({metrics}) {
-  const wr=metrics.win_rate||0, pf=metrics.profit_factor||0;
-  return (
-    <div style={{height:150,display:'flex',alignItems:'center',justifyContent:'space-evenly',padding:'0 8px',flexShrink:0,
-      borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
-      <DonutChart fillRatio={wr} displayVal={pct(wr)} label="Win Rate" color={wr>=0.4?GREEN:RED} size={80}/>
-      <DonutChart fillRatio={Math.min(pf/3,1)} displayVal={pf>0?fmt(pf,2):'—'} label="Prof Factor" color={pf>=1?GREEN:RED} size={80}/>
     </div>
   );
 }
@@ -696,8 +714,7 @@ function Dashboard() {
 
             {/* Right: Panel A + B + C */}
             <div style={{flex:48,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:140}}>
-              <PanelA metrics={metrics}/>
-              <PanelB metrics={metrics}/>
+              <SetupPerformancePanel currency={currency}/>
               <PanelC trades={closedForCurrency}/>
             </div>
           </div>
@@ -1758,10 +1775,12 @@ function Spinner() {
 }
 
 // ── Diverging bar chart helpers ───────────────────────────────────────────────
-function DivergingBars({rows, labelWidth=60}) {
+function DivergingBars({rows, labelWidth=60, fmtVal}) {
   if (!rows||!rows.length) return null;
   const maxAbs = Math.max(...rows.map(r=>Math.abs(r.pnl)),1);
   const sqrtMax = Math.sqrt(maxAbs);
+  const defaultFmt = (pnl,isPos) => (isPos?'+':'')+fmt(pnl,0);
+  const valFmt = fmtVal || defaultFmt;
   return (
     <div>
       {rows.map((r,i)=>{
@@ -1778,7 +1797,7 @@ function DivergingBars({rows, labelWidth=60}) {
                 {isPos&&<div style={{height:'100%',width:`${bp*100}%`,background:`${GREEN}99`,borderRadius:'0 3px 3px 0'}}/>}
               </div>
             </div>
-            <div style={{width:55,flexShrink:0,textAlign:'right',fontFamily:'Space Mono',fontSize:9,color:isPos?GREEN:RED}}>{isPos?'+':''}{fmt(r.pnl,0)}</div>
+            <div style={{width:55,flexShrink:0,textAlign:'right',fontFamily:'Space Mono',fontSize:9,color:isPos?GREEN:RED}}>{valFmt(r.pnl,isPos)}</div>
             {r.sub!=null&&<div style={{width:30,flexShrink:0,textAlign:'right',fontFamily:'Space Mono',fontSize:9,color:'#5a6478'}}>{r.sub}</div>}
           </div>
         );
