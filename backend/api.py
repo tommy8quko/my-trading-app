@@ -72,6 +72,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 # ── Caches ───────────────────────────────────────────────────────────────────
 
 import time as _time
+import threading as _threading
 
 # Price cache (5 min TTL)
 _price_cache: dict[str, float | None] = {}
@@ -82,14 +83,19 @@ _PRICE_TTL = 300
 _portfolio_cache: tuple | None = None
 _portfolio_cache_ts: float = 0.0
 _PORTFOLIO_TTL = 15
+_portfolio_lock = _threading.Lock()
 
 def _get_portfolio():
     global _portfolio_cache, _portfolio_cache_ts
     now = _time.time()
     if _portfolio_cache is not None and now - _portfolio_cache_ts < _PORTFOLIO_TTL:
         return _portfolio_cache
-    _portfolio_cache = build_portfolio()
-    _portfolio_cache_ts = now
+    with _portfolio_lock:
+        # Re-check inside the lock in case another thread just built it
+        if _portfolio_cache is not None and _time.time() - _portfolio_cache_ts < _PORTFOLIO_TTL:
+            return _portfolio_cache
+        _portfolio_cache = build_portfolio()
+        _portfolio_cache_ts = _time.time()
     return _portfolio_cache
 
 def _invalidate_portfolio():

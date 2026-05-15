@@ -1378,8 +1378,8 @@ function Analysis({version, year}) {
 
   const loadStats = (ccy) => {
     const yq = year ? `&year=${year}` : '';
-    api(`/metrics?currency=${ccy}${yq}`).then(m=>setCurrencies(m.currencies||['USD']));
-    api(`/stats?currency=${ccy}${yq}`).then(setStats);
+    api(`/metrics?currency=${ccy}${yq}`).then(m=>setCurrencies(m.currencies||['USD'])).catch(()=>{});
+    api(`/stats?currency=${ccy}${yq}`).then(setStats).catch(()=>setStats(null));
     api(`/stats/setup_tags?currency=${ccy}${yq}`).then(setSetupTags).catch(()=>setSetupTags({}));
     api(`/stats/maemfe_analysis?currency=${ccy}${yq}`).then(setMaemfe).catch(()=>setMaemfe([]));
     api(`/stats/market_condition?currency=${ccy}${yq}`).then(setMktCond).catch(()=>setMktCond({}));
