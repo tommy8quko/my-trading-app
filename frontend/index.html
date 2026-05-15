@@ -127,8 +127,12 @@ function TopNav({active, onNav}) {
           }}>{n.label}</button>
         ))}
       </div>
-      <div style={{fontSize:10,color:'#5a6478',fontFamily:'Space Mono',letterSpacing:'.06em',flexShrink:0}}>
-        IBKR · Chief Securities HK
+      <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
+        <img src="/static/logo.png" alt="" style={{height:22,opacity:0.85,filter:'invert(1) brightness(0.75)'}}
+          onError={e=>e.target.style.display='none'}/>
+        <span style={{fontSize:11,color:'#3a4258',fontFamily:'Space Mono',letterSpacing:'.06em'}}>
+          {new Date().getFullYear()}
+        </span>
       </div>
     </div>
   );
