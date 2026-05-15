@@ -247,8 +247,7 @@ function SetupPerformancePanel({currency}) {
     ? (pnl,isPos) => (isPos?'+':'')+fmt(pnl,0)
     : (pnl,isPos) => (isPos?'+':'')+fmt(pnl,1)+'%';
   return (
-    <div style={{flex:1,overflow:'hidden',padding:'10px 12px',display:'flex',flexDirection:'column',minHeight:0,
-      borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
+    <div style={{flex:1,overflow:'hidden',padding:'10px 12px',display:'flex',flexDirection:'column',minHeight:0}}>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8,flexShrink:0}}>
         <div style={S.hdr}>Setup Performance</div>
         <div style={{display:'flex',gap:2}}>
@@ -633,16 +632,18 @@ function Dashboard() {
   const [midFlex,  setMidFlex]  = React.useState(52);   // % of mid+right row
   const [eqFlex,   setEqFlex]   = React.useState(60);   // % of middle col height
   const [posFlex,  setPosFlex]  = React.useState(35);   // % of right-side height for positions
-  const [activeRH, setActiveRH] = React.useState(null);
-  const midRowRef = React.useRef(null);
-  const midColRef = React.useRef(null);
-  const rSideRef  = React.useRef(null);
+  const [setupFlex, setSetupFlex] = React.useState(50);
+  const [activeRH,  setActiveRH]  = React.useState(null);
+  const midRowRef  = React.useRef(null);
+  const midColRef  = React.useRef(null);
+  const rSideRef   = React.useRef(null);
+  const rightColRef= React.useRef(null);
 
   function startDrag(e, which) {
     e.preventDefault();
     const axis = (which==='kpi'||which==='mid') ? 'x' : 'y';
     const start = axis==='x' ? e.clientX : e.clientY;
-    const snap = {kpi:kpiW, mid:midFlex, eq:eqFlex, pos:posFlex}[which];
+    const snap = {kpi:kpiW, mid:midFlex, eq:eqFlex, pos:posFlex, setup:setupFlex}[which];
     setActiveRH(which);
     const move = mv => {
       const d = (axis==='x' ? mv.clientX : mv.clientY) - start;
@@ -654,6 +655,9 @@ function Dashboard() {
       } else if (which==='eq') {
         const H = midColRef.current?.clientHeight||400;
         setEqFlex(Math.max(20, Math.min(80, snap+d/H*100)));
+      } else if (which==='setup') {
+        const H = rightColRef.current?.clientHeight||400;
+        setSetupFlex(Math.max(15, Math.min(80, snap+d/H*100)));
       } else {
         const H = rSideRef.current?.clientHeight||500;
         setPosFlex(Math.max(10, Math.min(60, snap-d/H*100)));
@@ -793,7 +797,7 @@ function Dashboard() {
             <ResizeHandle dir='v' active={activeRH==='mid'} onMouseDown={e=>startDrag(e,'mid')}/>
 
             {/* Right: Edge stats + Setup + PanelC */}
-            <div style={{flex:100-midFlex,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:140}}>
+            <div ref={rightColRef} style={{flex:100-midFlex,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:140}}>
               {(()=>{
                 const cells = [
                   {label:'Expectancy',    val: metrics.expectancy_r!=null ? fmt(metrics.expectancy_r,2)+'R' : '—', color: metrics.expectancy_r>0?GREEN:metrics.expectancy_r<0?RED:'#c8d0e0'},
@@ -811,8 +815,13 @@ function Dashboard() {
                   </div>
                 );
               })()}
-              <SetupPerformancePanel currency={currency}/>
-              <PanelC trades={closedForCurrency}/>
+              <div style={{flex:setupFlex,display:'flex',flexDirection:'column',overflow:'hidden',minHeight:0}}>
+                <SetupPerformancePanel currency={currency}/>
+              </div>
+              <ResizeHandle dir='h' active={activeRH==='setup'} onMouseDown={e=>startDrag(e,'setup')}/>
+              <div style={{flex:100-setupFlex,display:'flex',flexDirection:'column',overflow:'hidden',minHeight:0}}>
+                <PanelC trades={closedForCurrency}/>
+              </div>
             </div>
           </div>
           <ResizeHandle dir='h' active={activeRH==='pos'} onMouseDown={e=>startDrag(e,'pos')}/>
