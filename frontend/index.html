@@ -2322,7 +2322,6 @@ function CalcPanel({onClose}) {
   const [target, setTarget] = React.useState('');
   const [stop,   setStop]   = React.useState('');
   const [riskPct,setRiskPct]= React.useState('');
-  const [mode,   setMode]   = React.useState('risk');   // 'risk' | 'qty' | 'stop'
   const [portfolio, setPortfolio] = React.useState(null);
   const [pos, setPos] = React.useState({top:60, right:20, left:null});
   const dragRef = React.useRef(null);
@@ -2362,29 +2361,39 @@ function CalcPanel({onClose}) {
   const Q = parseInt(qty), R = parseFloat(riskPct), T = parseFloat(target);
   const P = portfolio;
 
-  const riskPerUnit = (E && S) ? (dir==='LONG' ? E - S : S - E) : null;
+  const hasQty   = qty   !== '' && Q > 0;
+  const hasEntry = entry !== '' && E > 0;
+  const hasStop  = stop  !== '' && !isNaN(S);
+  const hasRisk  = riskPct !== '' && R > 0;
 
-  // Solved values
+  // Auto-detect which field to solve: the one that is empty while the others are filled
+  let mode = null;
+  if (!hasQty  && hasEntry && hasStop && hasRisk && P) mode = 'qty';
+  if (!hasStop && hasEntry && hasQty  && hasRisk && P) mode = 'stop';
+  if (!hasRisk && hasEntry && hasStop && hasQty  && P) mode = 'risk';
+
+  const riskPerUnit = (hasEntry && hasStop) ? (dir==='LONG' ? E - S : S - E) : null;
+
   let solvedQty=null, solvedStop=null, solvedRisk=null;
-  if (mode==='risk' && Q>0 && riskPerUnit!=null && riskPerUnit>0 && P)
+  if (mode==='risk' && Q>0 && riskPerUnit!=null && riskPerUnit>0)
     solvedRisk = round2((Q * riskPerUnit / P) * 100);
-  if (mode==='qty'  && R>0 && riskPerUnit!=null && riskPerUnit>0 && P)
+  if (mode==='qty'  && R>0 && riskPerUnit!=null && riskPerUnit>0)
     solvedQty  = Math.floor((P * R / 100) / riskPerUnit);
-  if (mode==='stop' && Q>0 && R>0 && E && P) {
+  if (mode==='stop' && Q>0 && R>0 && hasEntry) {
     const riskAmt = P * R / 100;
     solvedStop = round2(dir==='LONG' ? E - riskAmt/Q : E + riskAmt/Q);
   }
 
-  const displayQty   = mode==='qty'  ? solvedQty  : (Q||null);
-  const displayStop  = mode==='stop' ? solvedStop  : (S||null);
-  const displayRisk  = mode==='risk' ? solvedRisk  : (R||null);
-  const displayEntry = E||null;
+  const displayQty   = mode==='qty'  ? solvedQty  : (hasQty  ? Q : null);
+  const displayStop  = mode==='stop' ? solvedStop  : (hasStop ? S : null);
+  const displayRisk  = mode==='risk' ? solvedRisk  : (hasRisk ? R : null);
+  const displayEntry = hasEntry ? E : null;
 
-  const riskAmt = (displayQty&&displayEntry&&displayStop)
+  const riskAmt = (displayQty&&displayEntry&&displayStop!=null)
     ? round2(Math.abs(displayEntry-displayStop)*displayQty) : null;
   const notional = (displayQty&&displayEntry) ? round2(displayQty*displayEntry) : null;
   const notionalPct = (notional&&P) ? round2(notional/P*100) : null;
-  const rr = (displayEntry&&displayStop&&T)
+  const rr = (displayEntry&&displayStop!=null&&T)
     ? round2(Math.abs(T-displayEntry)/Math.abs(displayEntry-displayStop)) : null;
 
   const inSt = {
@@ -2393,11 +2402,6 @@ function CalcPanel({onClose}) {
     color:'#c8d0e0',fontSize:12,fontFamily:'Space Mono',outline:'none',boxSizing:'border-box',
   };
   const solvedSt = {...inSt, background:'rgba(68,153,255,0.08)', border:`1px solid ${ACCENT}55`, color:ACCENT, fontWeight:700};
-  const modeBtn = active => ({
-    flex:1,padding:'4px 0',fontSize:10,borderRadius:4,border:'none',cursor:'pointer',
-    background:active?`${ACCENT}22`:'rgba(255,255,255,0.05)',
-    color:active?ACCENT:'#5a6478',fontFamily:'Space Mono',fontWeight:700,
-  });
   const dirBtn = active => ({
     flex:1,padding:'5px 0',fontSize:11,borderRadius:4,border:'none',cursor:'pointer',
     fontFamily:'Space Mono',fontWeight:700,
@@ -2437,16 +2441,6 @@ function CalcPanel({onClose}) {
       <div style={{display:'flex',gap:4,marginBottom:14}}>
         <button style={dirBtn(dir==='LONG')}  onClick={()=>setDir('LONG')}>LONG</button>
         <button style={dirBtn(dir==='SHORT')} onClick={()=>setDir('SHORT')}>SHORT</button>
-      </div>
-
-      {/* Solve mode */}
-      <div style={{marginBottom:14}}>
-        <div style={{...S.hdr,marginBottom:4}}>Solve for</div>
-        <div style={{display:'flex',gap:4}}>
-          <button style={modeBtn(mode==='qty')}  onClick={()=>setMode('qty')}>Quantity</button>
-          <button style={modeBtn(mode==='stop')} onClick={()=>setMode('stop')}>Stop</button>
-          <button style={modeBtn(mode==='risk')} onClick={()=>setMode('risk')}>Risk %</button>
-        </div>
       </div>
 
       {/* Fields in order: Qty, Entry, Target, Stop, Risk% */}
