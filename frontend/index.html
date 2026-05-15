@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Trading Journal</title>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link href="/static/fonts/fonts.css" rel="stylesheet">
 <script src="/static/vendor/react.min.js"></script>
 <script src="/static/vendor/react-dom.min.js"></script>
 <script src="/static/vendor/babel.min.js"></script>
@@ -117,7 +117,7 @@ function TopNav({active, onNav}) {
       borderBottom:'1px solid rgba(255,255,255,0.06)',flexShrink:0,padding:'0 20px'}}>
       <div style={{display:'flex',alignItems:'center',marginRight:32,flexShrink:0}}>
         <img src="/static/Chartingwoof logo ( Big Head).png" alt="ChartingWoof"
-          style={{height:30,opacity:0.9,filter:'invert(1) brightness(0.8)'}}
+          style={{height:30,filter:'invert(1) sepia(1) saturate(0.3) hue-rotate(180deg) brightness(0.88)'}}
           onError={e=>e.target.style.display='none'}/>
       </div>
       <div style={{flex:1,display:'flex',alignItems:'stretch',justifyContent:'flex-start',height:44}}>
