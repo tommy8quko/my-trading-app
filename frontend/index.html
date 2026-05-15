@@ -2223,17 +2223,47 @@ function CalendarPage({version, year}) {
           if(!cell) return <div key={i}/>;
           const {d,ds,pnl}=cell, has=pnl!==null;
           const intensity=has?Math.sqrt(Math.abs(pnl)/maxAbs):0;
-          const bg=has?(pnl>0?`rgba(5,150,144,${0.12+intensity*0.45})`:`rgba(206,49,75,${0.12+intensity*0.45})`):'rgba(255,255,255,0.02)';
+          const isWin=pnl>0;
+          const bg=has?(isWin?`rgba(5,150,144,${0.25+intensity*0.5})`:`rgba(206,49,75,${0.25+intensity*0.5})`):'rgba(255,255,255,0.02)';
           const isSel=selectedDay===ds;
+          const dayTrades=has?(filtered.filter(t=>t.exit_date===ds)):[];
+          const tags=[...new Set(dayTrades.map(t=>t.setup_tag).filter(Boolean))];
+          const MAX_TAGS=2;
           return (
             <div key={i} onClick={()=>setSelectedDay(isSel?null:ds)}
-              style={{background:bg,borderRadius:6,padding:'7px 8px',minHeight:52,display:'flex',flexDirection:'column',justifyContent:'space-between',
+              style={{background:bg,borderRadius:6,padding:'6px 8px',minHeight:80,display:'flex',
+                flexDirection:'column',gap:2,
                 cursor:has?'pointer':'default',
-                outline:isSel?`2px solid ${ACCENT}`:'2px solid transparent',
+                outline:isSel?`2px solid rgba(255,255,255,0.6)`:'2px solid transparent',
                 outlineOffset:'-1px',
               }}>
-              <div style={{fontFamily:'Space Mono',fontSize:9,color:has?'#c8d0e0':'#3a4455'}}>{d}</div>
-              {has&&<div style={{fontFamily:'Space Mono',fontSize:9,fontWeight:700,color:pnl>0?GREEN:RED,textAlign:'right'}}>{(pnl>0?'+':'')+fmt(pnl,0)}</div>}
+              <div style={{textAlign:'right',fontFamily:'Space Mono',fontSize:9,
+                color:has?'rgba(255,255,255,0.55)':'#3a4455'}}>{d}</div>
+              {has&&<>
+                <div style={{fontFamily:'Space Mono',fontSize:11,fontWeight:700,color:'#ffffff',lineHeight:1.2}}>
+                  {pnl<0?'-':''}${fmt(Math.abs(pnl),2)}
+                </div>
+                <div style={{fontFamily:'Space Grotesk',fontSize:9,color:'rgba(255,255,255,0.65)'}}>
+                  {dayTrades.length} Trade{dayTrades.length!==1?'s':''}
+                </div>
+                {tags.length>0&&(
+                  <div style={{display:'flex',flexWrap:'wrap',gap:2,marginTop:1}}>
+                    {tags.slice(0,MAX_TAGS).map(tag=>(
+                      <span key={tag} style={{
+                        fontSize:8,fontFamily:'Space Grotesk',fontWeight:700,
+                        padding:'1px 5px',borderRadius:3,
+                        background:'rgba(0,0,0,0.25)',color:'rgba(255,255,255,0.9)',
+                        letterSpacing:'.03em',textTransform:'uppercase',whiteSpace:'nowrap',
+                      }}>{tag}</span>
+                    ))}
+                    {tags.length>MAX_TAGS&&(
+                      <span style={{fontSize:8,fontFamily:'Space Grotesk',color:'rgba(255,255,255,0.6)',padding:'1px 2px'}}>
+                        +{tags.length-MAX_TAGS} more
+                      </span>
+                    )}
+                  </div>
+                )}
+              </>}
             </div>
           );
         })}

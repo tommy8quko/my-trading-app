@@ -170,14 +170,13 @@ def get_portfolio(year: int = 0):
     totals = _account_totals(open_pos, closed)
     total_usd = totals.get("USD", 0) + totals.get("HKD", 0) / _FX_HKD_USD
 
-    # Fetch review data for all open positions in one query
-    review_map: dict[tuple, dict] = {}
-    if open_pos:
-        raw_reviews = get_supabase().table("trade_reviews") \
-            .select("symbol,entry_date,setup_tag,market_condition").execute().data or []
-        open_keys = {(p.symbol, str(p.earliest_entry_date)) for p in open_pos if p.earliest_entry_date}
-        review_map = {(r["symbol"], r["entry_date"]): r for r in raw_reviews
-                      if (r["symbol"], r["entry_date"]) in open_keys}
+    # Fetch all reviews once — used for both open positions and closed trades
+    raw_reviews = get_supabase().table("trade_reviews") \
+        .select("symbol,entry_date,setup_tag,market_condition,outcome_reason").execute().data or []
+    all_review_map: dict[tuple, dict] = {(r["symbol"], r["entry_date"]): r for r in raw_reviews}
+
+    open_keys = {(p.symbol, str(p.earliest_entry_date)) for p in open_pos if p.earliest_entry_date}
+    review_map = {k: v for k, v in all_review_map.items() if k in open_keys}
 
     pos_rows = []
     for p in open_pos:
@@ -241,6 +240,8 @@ def get_portfolio(year: int = 0):
                 ) if t.avg_entry else None,
                 "r_multiple":   round(t.r_multiple, 2) if t.r_multiple is not None else None,
                 "initial_stop": t.initial_stop,
+                "setup_tag":    all_review_map.get((t.symbol, str(t.entry_date)), {}).get("setup_tag"),
+                "outcome_reason": all_review_map.get((t.symbol, str(t.entry_date)), {}).get("outcome_reason"),
             }
             for t in sorted(
                 [t for t in closed if not year or t.exit_date.year == year],
