@@ -807,7 +807,7 @@ function Dashboard() {
                   <SortTh col="direction"      label="Dir"       sort={posSort} onSort={tog}/>
                   <SortTh col="quantity"       label="Qty"       sort={posSort} onSort={tog} align="right"/>
                   <SortTh col="avg_entry"      label="Avg Entry" sort={posSort} onSort={tog} align="right"/>
-                  <SortTh col="notional"       label="Notional"  sort={posSort} onSort={tog} align="right"/>
+                  <SortTh col="notional_pct"   label="Notional%" sort={posSort} onSort={tog} align="right"/>
                   <SortTh col="stop_loss"      label="Stop"      sort={posSort} onSort={tog} align="right"/>
                   <SortTh col="unrealized_pnl" label="P&L"       sort={posSort} onSort={tog} align="right"/>
                   <SortTh col="pct_return"     label="% Ret"     sort={posSort} onSort={tog} align="right"/>
@@ -895,7 +895,11 @@ function PositionRow({p, idx=0, onRefresh}) {
         </td>
         <td style={{textAlign:'right'}}>{fmt(p.quantity)}</td>
         <td style={{textAlign:'right'}}>{fmt(p.avg_entry,4)}</td>
-        <td style={{textAlign:'right',color:'#c8d0e0'}}>{p.avg_entry&&p.quantity?fmt(p.avg_entry*p.quantity,0):' —'}</td>
+        <td style={{textAlign:'right',color:'#c8d0e0'}}>
+          {p.notional_pct!=null
+            ? <span title={`Notional: ${fmt(p.notional,0)} ${p.currency}`}>{fmt(p.notional_pct,1)}%</span>
+            : fmt(p.notional,0)}
+        </td>
         <td style={{textAlign:'right',color:RED}}>{p.stop_loss ? fmt(p.stop_loss,4) : '—'}</td>
         <td style={{textAlign:'right',fontWeight:700,color:p.unrealized_pnl!=null?pnlColor(p.unrealized_pnl):'#5a6478'}}>
           {p.unrealized_pnl!=null ? (p.unrealized_pnl>=0?'+':'')+fmt(p.unrealized_pnl,2) : '—'}

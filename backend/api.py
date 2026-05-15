@@ -1,6 +1,6 @@
 """FastAPI backend — serves all data to the React frontend."""
 from __future__ import annotations
-import sys, os
+import sys, os, json
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from datetime import date
@@ -22,6 +22,30 @@ EXCLUDED_SYMBOLS = {"SGOV", "BOXX"}
 
 # FX rate used to convert HKD → USD in the "ALL" combined view
 _FX_HKD_USD = 7.8
+
+# ── Account config (cash balances) ────────────────────────────────────────────
+_ACCOUNT_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "account_config.json")
+
+def _load_account_config() -> dict:
+    try:
+        with open(_ACCOUNT_CONFIG_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {"chief_hkd_total": 0.0, "ibkr_cash_usd": 0.0}
+
+def _save_account_config(data: dict) -> None:
+    with open(_ACCOUNT_CONFIG_PATH, "w") as f:
+        json.dump(data, f, indent=2)
+
+def _account_totals(open_pos) -> dict[str, float]:
+    """Return total account value per currency (cash config + open position notionals)."""
+    cfg = _load_account_config()
+    usd_notional = sum(p.avg_entry_price * p.total_quantity for p in open_pos if p.currency == "USD")
+    hkd_notional = sum(p.avg_entry_price * p.total_quantity for p in open_pos if p.currency == "HKD")
+    return {
+        "USD": round(cfg.get("ibkr_cash_usd", 0.0) + usd_notional, 2),
+        "HKD": round(cfg.get("chief_hkd_total", 0.0), 2),  # Chief total already includes positions
+    }
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -119,12 +143,16 @@ def get_portfolio():
         pct = (pnl / cost * 100) if cost else None
         return round(pnl, 2), round(pct, 2) if pct is not None else None
 
+    totals = _account_totals(open_pos)
     pos_rows = []
     for p in open_pos:
         price = prices.get(p.symbol)
         pnl, pct = _pos_pnl(p, price)
         qty = p.total_quantity
         avg = p.avg_entry_price
+        notional = round(avg * qty, 2)
+        acct_total = totals.get(p.currency, 0)
+        notional_pct = round(notional / acct_total * 100, 2) if acct_total else None
         pos_rows.append({
             "symbol":         p.symbol,
             "exchange":       p.exchange,
@@ -132,7 +160,8 @@ def get_portfolio():
             "direction":      p.direction,
             "quantity":       qty,
             "avg_entry":      round(avg, 4),
-            "notional":       round(avg * qty, 2),
+            "notional":       notional,
+            "notional_pct":   notional_pct,
             "stop_loss":      p.initial_stop_loss,
             "entry_date":     str(p.earliest_entry_date) if p.earliest_entry_date else None,
             "current_price":  round(price, 4) if price else None,
@@ -152,6 +181,7 @@ def get_portfolio():
         })
 
     return {
+        "account_totals": totals,
         "open_positions": pos_rows,
         "closed_trades": [
             {
@@ -243,6 +273,22 @@ def get_stats(currency: str = "USD"):
         "by_dow": breakdown_by_dow(filtered),
         "by_holding": breakdown_by_holding_period(filtered),
     }
+
+
+# ── Account Balance Config ────────────────────────────────────────────────────
+
+@app.get("/api/account/balances")
+def get_account_balances():
+    return _load_account_config()
+
+class AccountBalances(BaseModel):
+    chief_hkd_total: float
+    ibkr_cash_usd: float
+
+@app.post("/api/account/balances")
+def set_account_balances(body: AccountBalances):
+    _save_account_config({"chief_hkd_total": body.chief_hkd_total, "ibkr_cash_usd": body.ibkr_cash_usd})
+    return {"ok": True}
 
 
 # ── Review Queue ──────────────────────────────────────────────────────────────
