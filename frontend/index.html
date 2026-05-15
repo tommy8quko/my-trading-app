@@ -455,16 +455,18 @@ function EquityCurve({data, trades=[], spyData=[]}) {
     }
   }
 
-  // ── R-multiple trade dots ─────────────────────────────────────────────────
+  // ── R-multiple trade dots — one dot per date, grouped ────────────────────
   const EXCL = new Set(['SGOV','BOXX']);
-  const tradeDots = (trades||[])
+  const byDate = {};
+  (trades||[])
     .filter(t => !EXCL.has(t.symbol) && t.exit_date >= ptsFrom && t.exit_date <= ptsTo)
-    .map(t => {
-      let idx = pts.findIndex(p => p.date >= t.exit_date);
-      if (idx === -1) idx = pts.length - 1;
-      const isWin = (t.r_multiple != null ? t.r_multiple : t.pnl) > 0;
-      return {cx:px(idx), cy:py(pts[idx].pnl), trade:t, color:isWin?GREEN:RED};
-    });
+    .forEach(t => { (byDate[t.exit_date] = byDate[t.exit_date]||[]).push(t); });
+  const tradeDots = Object.entries(byDate).map(([date, dayTrades]) => {
+    let idx = pts.findIndex(p => p.date >= date);
+    if (idx === -1) idx = pts.length - 1;
+    const netPnl = dayTrades.reduce((s,t) => s + (t.r_multiple != null ? t.r_multiple : t.pnl), 0);
+    return {cx:px(idx), cy:py(pts[idx].pnl), trades:dayTrades, color:netPnl>=0?GREEN:RED};
+  });
 
   const yTicks = [minV, (minV+maxV)/2, maxV];
   const xIdxs  = pts.length > 2 ? [0, Math.floor((pts.length-1)/2), pts.length-1] : [0, pts.length-1];
@@ -477,7 +479,7 @@ function EquityCurve({data, trades=[], spyData=[]}) {
     const my = e.clientY - rect.top;
     // check trade dots first (12px radius)
     const nearDot = tradeDots.find(d => Math.hypot(d.cx-mx, d.cy-my) < 12);
-    if (nearDot) { setTradeTip(nearDot); setHover(null); return; }
+    if (nearDot) { setTradeTip(nearDot); setHover(null); return; }  // nearDot.trades is an array
     setTradeTip(null);
     const idx = pts.reduce((best,_,i) =>
       Math.abs(px(i)-mx) < Math.abs(px(best)-mx) ? i : best, 0);
@@ -596,13 +598,21 @@ function EquityCurve({data, trades=[], spyData=[]}) {
           <div style={{position:'absolute',left:dotTtLeft,top:dotTtTop,
             background:'#141a24',border:`1px solid ${tradeTip.color}44`,
             borderRadius:4,padding:'6px 10px',fontFamily:'Space Mono',fontSize:11,
-            pointerEvents:'none',zIndex:20,whiteSpace:'nowrap'}}>
-            <div style={{color:'#5a6478',marginBottom:2,fontSize:9}}>{tradeTip.trade.exit_date} · {tradeTip.trade.direction}</div>
-            <div style={{color:tradeTip.color,fontWeight:700,fontSize:12}}>{tradeTip.trade.symbol}</div>
-            <div style={{color:tradeTip.color,marginTop:2}}>
-              {tradeTip.trade.pnl>=0?'+':''}{fmt(tradeTip.trade.pnl,2)}
-              {tradeTip.trade.r_multiple!=null && <span style={{marginLeft:6,opacity:.8}}>{fmt(tradeTip.trade.r_multiple,2)}R</span>}
-            </div>
+            pointerEvents:'none',zIndex:20,whiteSpace:'nowrap',minWidth:140}}>
+            <div style={{color:'#5a6478',marginBottom:4,fontSize:9}}>{tradeTip.trades[0].exit_date}</div>
+            {tradeTip.trades.map((t,i)=>{
+              const c = (t.r_multiple!=null?t.r_multiple:t.pnl)>=0?GREEN:RED;
+              return (
+                <div key={i} style={{display:'flex',justifyContent:'space-between',gap:12,
+                  marginBottom:i<tradeTip.trades.length-1?3:0,borderTop:i>0?'1px solid rgba(255,255,255,0.05)':'none',paddingTop:i>0?3:0}}>
+                  <span style={{color:c,fontWeight:700}}>{t.symbol}</span>
+                  <span style={{color:c}}>
+                    {t.pnl>=0?'+':''}{fmt(t.pnl,2)}
+                    {t.r_multiple!=null&&<span style={{opacity:.7,marginLeft:5}}>{fmt(t.r_multiple,2)}R</span>}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
