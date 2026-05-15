@@ -166,13 +166,6 @@ function TopNav({active, onNav, year, onYearChange}) {
         )}
         <button style={btnStyle} onClick={()=>onYearChange(year+1)}>▶</button>
       </div>
-      <button title="Position Sizing Calculator (F1)"
-        onClick={()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'F1',bubbles:true}))}
-        style={{marginLeft:12,background:'rgba(99,179,237,0.08)',border:'1px solid rgba(99,179,237,0.2)',
-          borderRadius:4,color:'#63b3ed',fontSize:9,fontFamily:'Space Mono',fontWeight:700,
-          padding:'3px 7px',cursor:'pointer',letterSpacing:'.05em',flexShrink:0}}>
-        F1
-      </button>
     </div>
   );
 }
