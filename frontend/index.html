@@ -157,8 +157,14 @@ function MetricStrip({metrics, currency}) {
       {/* Win Rate with donut */}
       <div style={{...sep,flex:1,display:'flex',alignItems:'center',padding:'0 20px',gap:14}}>
         <svg width={44} height={44} style={{flexShrink:0}}>
+          <defs>
+            <linearGradient id="wr-grad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#ffffff" stopOpacity="0.9"/>
+              <stop offset="100%" stopColor={wrColor} stopOpacity="1"/>
+            </linearGradient>
+          </defs>
           <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={sw}/>
-          <circle cx={cx} cy={cy} r={r} fill="none" stroke={wrColor} strokeWidth={sw}
+          <circle cx={cx} cy={cy} r={r} fill="none" stroke="url(#wr-grad)" strokeWidth={sw}
             strokeDasharray={`${filled} ${circ-filled}`} strokeDashoffset={circ*0.25} strokeLinecap="round"/>
           <text x={cx} y={cy+4} textAnchor="middle" fill="#c8d0e0" fontSize={10} fontFamily="Space Mono" fontWeight="700">
             {Math.round(wr*100)}%
