@@ -146,7 +146,7 @@ def _fetch_prices(positions: list[tuple[str, str]]) -> dict[str, float | None]:
 # ── Portfolio ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/portfolio")
-def get_portfolio():
+def get_portfolio(year: int = 0):
     open_pos, closed = _get_portfolio()
 
     prices = _fetch_prices([(p.symbol, p.exchange) for p in open_pos])
@@ -236,7 +236,9 @@ def get_portfolio():
                 "r_multiple":   round(t.r_multiple, 2) if t.r_multiple is not None else None,
                 "initial_stop": t.initial_stop,
             }
-            for t in sorted(closed, key=lambda x: (x.exit_date, x.exit_time or ''), reverse=True)
+            for t in sorted(
+                [t for t in closed if not year or t.exit_date.year == year],
+                key=lambda x: (x.exit_date, x.exit_time or ''), reverse=True)
         ],
     }
 
@@ -244,7 +246,7 @@ def get_portfolio():
 # ── Metrics ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/metrics")
-def get_metrics(currency: str = "USD"):
+def get_metrics(currency: str = "USD", year: int = 0):
     import copy
     open_pos, closed = _get_portfolio()
     pending = len(fetch_pending(limit=200))
@@ -260,11 +262,14 @@ def get_metrics(currency: str = "USD"):
             tc.realized_pnl = t.realized_pnl / _FX_HKD_USD
             return tc
         filtered = [_to_usd(t) for t in closed if t.symbol not in EXCLUDED_SYMBOLS]
-        # Equity curve uses only closed trades (open-position unrealized P&L omitted for ALL)
+        if year:
+            filtered = [t for t in filtered if t.exit_date.year == year]
         cum = equity_curve_full(filtered, [], {})
     else:
         filtered = [t for t in closed if t.currency == currency and t.symbol not in EXCLUDED_SYMBOLS]
-        open_filtered = [p for p in open_pos if p.currency == currency]
+        if year:
+            filtered = [t for t in filtered if t.exit_date.year == year]
+        open_filtered = [] if year else [p for p in open_pos if p.currency == currency]
         prices = _fetch_prices([(p.symbol, p.exchange) for p in open_filtered]) if open_filtered else {}
         cum = equity_curve_full(filtered, open_filtered, prices)
 
@@ -298,9 +303,11 @@ def get_metrics(currency: str = "USD"):
 # ── Statistics ────────────────────────────────────────────────────────────────
 
 @app.get("/api/stats")
-def get_stats(currency: str = "USD"):
+def get_stats(currency: str = "USD", year: int = 0):
     _, closed = _get_portfolio()
     filtered = [t for t in closed if t.currency == currency and t.symbol not in EXCLUDED_SYMBOLS]
+    if year:
+        filtered = [t for t in filtered if t.exit_date.year == year]
     return {
         "by_direction": breakdown_by_direction(filtered),
         "by_dow": breakdown_by_dow(filtered),
@@ -738,10 +745,12 @@ def get_spy(from_date: str = None):
 # ── Setup tag performance ─────────────────────────────────────────────────────
 
 @app.get("/api/stats/setup_tags")
-def get_setup_tag_stats(currency: str = "USD"):
+def get_setup_tag_stats(currency: str = "USD", year: int = 0):
     from collections import defaultdict
     _, closed = _get_portfolio()
     filtered = [t for t in closed if t.currency == currency and t.symbol not in EXCLUDED_SYMBOLS]
+    if year:
+        filtered = [t for t in filtered if t.exit_date.year == year]
     trade_lookup = {(t.symbol, str(t.entry_date)): t for t in filtered}
 
     reviews = get_supabase().table("trade_reviews").select("symbol,entry_date,setup_tag").execute().data
@@ -779,10 +788,12 @@ def get_setup_tag_stats(currency: str = "USD"):
 # ── Market condition performance ─────────────────────────────────────────────
 
 @app.get("/api/stats/market_condition")
-def get_market_condition_stats(currency: str = "USD"):
+def get_market_condition_stats(currency: str = "USD", year: int = 0):
     from collections import defaultdict
     _, closed = _get_portfolio()
     filtered = [t for t in closed if t.currency == currency and t.symbol not in EXCLUDED_SYMBOLS]
+    if year:
+        filtered = [t for t in filtered if t.exit_date.year == year]
     trade_lookup = {(t.symbol, str(t.entry_date)): t for t in filtered}
     reviews = get_supabase().table("trade_reviews").select("symbol,entry_date,market_condition").execute().data
     cond_trades: dict[str, list] = defaultdict(list)
@@ -808,9 +819,11 @@ def get_market_condition_stats(currency: str = "USD"):
 # ── MAE/MFE aggregate analysis ────────────────────────────────────────────────
 
 @app.get("/api/stats/maemfe_analysis")
-def get_maemfe_analysis(currency: str = "USD"):
+def get_maemfe_analysis(currency: str = "USD", year: int = 0):
     _, closed = _get_portfolio()
     filtered = [t for t in closed if t.currency == currency and t.symbol not in EXCLUDED_SYMBOLS]
+    if year:
+        filtered = [t for t in filtered if t.exit_date.year == year]
     trade_lookup = {(t.symbol, str(t.entry_date)): t for t in filtered}
 
     reviews = get_supabase().table("trade_reviews").select("*").execute().data
