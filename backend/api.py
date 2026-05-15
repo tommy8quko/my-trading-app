@@ -632,6 +632,35 @@ def get_setup_tag_stats(currency: str = "USD"):
     return result
 
 
+# ── Market condition performance ─────────────────────────────────────────────
+
+@app.get("/api/stats/market_condition")
+def get_market_condition_stats(currency: str = "USD"):
+    from collections import defaultdict
+    _, closed = build_portfolio()
+    filtered = [t for t in closed if t.currency == currency and t.symbol not in EXCLUDED_SYMBOLS]
+    trade_lookup = {(t.symbol, str(t.entry_date)): t for t in filtered}
+    reviews = get_supabase().table("trade_reviews").select("symbol,entry_date,market_condition").execute().data
+    cond_trades: dict[str, list] = defaultdict(list)
+    for rev in reviews:
+        cond = rev.get("market_condition")
+        if not cond:
+            continue
+        trade = trade_lookup.get((rev["symbol"], rev["entry_date"]))
+        if trade:
+            cond_trades[cond].append(trade)
+    result = {}
+    for cond, trades in cond_trades.items():
+        winners = [t for t in trades if t.realized_pnl > 0]
+        result[cond] = {
+            "count": len(trades),
+            "win_rate": round(len(winners) / len(trades), 4),
+            "total_pnl": round(sum(t.realized_pnl for t in trades), 2),
+            "avg_pnl": round(sum(t.realized_pnl for t in trades) / len(trades), 2),
+        }
+    return result
+
+
 # ── MAE/MFE aggregate analysis ────────────────────────────────────────────────
 
 @app.get("/api/stats/maemfe_analysis")

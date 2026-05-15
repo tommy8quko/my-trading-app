@@ -89,6 +89,7 @@ const NAV = [
   {id:'dashboard', label:'Dashboard'},
   {id:'journal',   label:'Journal'},
   {id:'analysis',  label:'Analysis'},
+  {id:'calendar',  label:'Calendar'},
   {id:'data',      label:'Data'},
 ];
 
@@ -136,9 +137,10 @@ function TabBar({tabs, active, onChange}) {
 function MetricStrip({metrics, currency}) {
   if (!metrics) return null;
   const panels = [
-    {label:'Total P&L',       val:(metrics.total_pnl>=0?'+':'')+fmt(metrics.total_pnl,2)+' '+currency, color:pnlColor(metrics.total_pnl)},
-    {label:'Profit-Loss Ratio',val:metrics.profit_factor!=null?fmt(metrics.profit_factor,2):'—',        color:metrics.profit_factor>=1?GREEN:RED},
-    {label:'Win Rate',         val:pct(metrics.win_rate),                                               color:metrics.win_rate>=0.4?GREEN:RED},
+    {label:'Total P&L',      val:(metrics.total_pnl>=0?'+':'')+fmt(metrics.total_pnl,2)+' '+currency, color:pnlColor(metrics.total_pnl)},
+    {label:'Win Rate',       val:pct(metrics.win_rate),                                               color:metrics.win_rate>=0.4?GREEN:RED},
+    {label:'Current Streak', val:metrics.current_streak?.count?`${metrics.current_streak.count}${metrics.current_streak.type}`:'—',
+      color:metrics.current_streak?.type==='W'?GREEN:metrics.current_streak?.type==='L'?RED:'#c8d0e0'},
   ];
   return (
     <div style={{height:60,display:'flex',background:'#0b0e14',borderBottom:'1px solid rgba(255,255,255,0.06)',flexShrink:0}}>
@@ -1113,6 +1115,7 @@ function Analysis() {
   const [stats,        setStats]        = React.useState(null);
   const [setupTags,    setSetupTags]    = React.useState(null);
   const [maemfe,       setMaemfe]       = React.useState(null);
+  const [mktCond,      setMktCond]      = React.useState(null);
   const [currency,     setCurrency]     = React.useState('USD');
   const [currencies,   setCurrencies]   = React.useState(['USD']);
   const [question,     setQuestion]     = React.useState('');
@@ -1126,6 +1129,7 @@ function Analysis() {
     api(`/stats?currency=${ccy}`).then(setStats);
     api(`/stats/setup_tags?currency=${ccy}`).then(setSetupTags).catch(()=>setSetupTags({}));
     api(`/stats/maemfe_analysis?currency=${ccy}`).then(setMaemfe).catch(()=>setMaemfe([]));
+    api(`/stats/market_condition?currency=${ccy}`).then(setMktCond).catch(()=>setMktCond({}));
   };
 
   React.useEffect(()=>{ loadStats(currency); }, [currency]);
@@ -1172,10 +1176,15 @@ function Analysis() {
                 <StatsTable title="Long vs Short" rows={Object.entries(stats.by_direction).map(([k,v])=>({
                   name:k, count:v.count, winRate:pct(v.win_rate), pnl:v.total_pnl,
                 }))}/>
-                <StatsTable title="Entry Day of Week" rows={Object.entries(stats.by_dow).map(([k,v])=>({
-                  name:k, count:v.count, winRate:pct(v.win_rate), pnl:v.total_pnl,
-                }))}/>
+                <DowBarChart data={stats.by_dow}/>
                 <HoldingTable rows={stats.by_holding}/>
+              </div>
+            )}
+
+            {/* Market Condition */}
+            {mktCond && (
+              <div style={{marginTop:24}}>
+                <MarketConditionChart data={mktCond}/>
               </div>
             )}
 
@@ -1725,10 +1734,152 @@ function Spinner() {
   return <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',color:'#5a6478',fontSize:11,fontFamily:'Space Mono',letterSpacing:'.08em'}}>LOADING…</div>;
 }
 
+// ── Diverging bar chart helpers ───────────────────────────────────────────────
+function DivergingBars({rows, labelWidth=60}) {
+  if (!rows||!rows.length) return null;
+  const maxAbs = Math.max(...rows.map(r=>Math.abs(r.pnl)),1);
+  const sqrtMax = Math.sqrt(maxAbs);
+  return (
+    <div>
+      {rows.map((r,i)=>{
+        const isPos=r.pnl>=0, bp=(sqrtMax>0?Math.sqrt(Math.abs(r.pnl))/sqrtMax:0)*0.85;
+        return (
+          <div key={i} style={{display:'flex',alignItems:'center',marginBottom:5,gap:6}}>
+            <div style={{width:labelWidth,flexShrink:0,textAlign:'right',fontFamily:'Space Mono',fontSize:9,color:r.labelColor||'#09CDDF',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.label}</div>
+            <div style={{flex:1,display:'flex',alignItems:'center',height:12,overflowX:'hidden'}}>
+              <div style={{flex:1,display:'flex',justifyContent:'flex-end',height:'100%'}}>
+                {!isPos&&<div style={{height:'100%',width:`${bp*100}%`,background:`${RED}99`,borderRadius:'3px 0 0 3px'}}/>}
+              </div>
+              <div style={{width:1,height:16,background:'rgba(255,255,255,0.1)',flexShrink:0}}/>
+              <div style={{flex:1,height:'100%'}}>
+                {isPos&&<div style={{height:'100%',width:`${bp*100}%`,background:`${GREEN}99`,borderRadius:'0 3px 3px 0'}}/>}
+              </div>
+            </div>
+            <div style={{width:55,flexShrink:0,textAlign:'right',fontFamily:'Space Mono',fontSize:9,color:isPos?GREEN:RED}}>{isPos?'+':''}{fmt(r.pnl,0)}</div>
+            {r.sub!=null&&<div style={{width:30,flexShrink:0,textAlign:'right',fontFamily:'Space Mono',fontSize:9,color:'#5a6478'}}>{r.sub}</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DowBarChart({data}) {
+  if (!data) return null;
+  const ORDER=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+  const SHORT={Monday:'Mon',Tuesday:'Tue',Wednesday:'Wed',Thursday:'Thu',Friday:'Fri',Saturday:'Sat',Sunday:'Sun'};
+  const rows=ORDER.map(d=>data[d]?{label:SHORT[d],pnl:data[d].total_pnl,sub:pct(data[d].win_rate)}:null).filter(Boolean);
+  if (!rows.length) return null;
+  return <div><div style={{...S.hdr,marginBottom:10}}>P&L by Day of Week</div><DivergingBars rows={rows} labelWidth={28}/></div>;
+}
+
+function MarketConditionChart({data}) {
+  if (!data) return null;
+  const ORDER=['Risk On','Neutral','Risk Off'];
+  const COLORS={'Risk On':GREEN,'Neutral':'#c8d0e0','Risk Off':RED};
+  const rows=ORDER.map(c=>data[c]?{label:c,pnl:data[c].total_pnl,sub:pct(data[c].win_rate),labelColor:COLORS[c]}:null).filter(Boolean);
+  return (
+    <div>
+      <div style={{...S.hdr,marginBottom:10}}>P&L by Market Condition</div>
+      {rows.length ? <DivergingBars rows={rows} labelWidth={60}/> : <div style={{color:'#5a6478',fontSize:11,fontFamily:'Space Mono'}}>No market condition tags logged yet.</div>}
+    </div>
+  );
+}
+
+// ── Calendar page ─────────────────────────────────────────────────────────────
+function CalendarPage() {
+  const [trades,     setTrades]     = React.useState(null);
+  const [currency,   setCurrency]   = React.useState('ALL');
+  const [currencies, setCurrencies] = React.useState(['USD']);
+  const [cur,        setCur]        = React.useState(()=>{ const n=new Date(); return {y:n.getFullYear(),m:n.getMonth()}; });
+
+  React.useEffect(()=>{
+    Promise.all([api('/portfolio'), api('/metrics?currency=ALL')]).then(([p,met])=>{
+      setTrades(p.closed_trades||[]);
+      setCurrencies(met.currencies||['USD']);
+    });
+  },[]);
+
+  if (!trades) return <Spinner/>;
+
+  const EXCL=new Set(['SGOV','BOXX']);
+  const filtered=trades.filter(t=>(currency==='ALL'||t.currency===currency)&&!EXCL.has(t.symbol));
+  const dayPnl={};
+  filtered.forEach(t=>{ dayPnl[t.exit_date]=(dayPnl[t.exit_date]||0)+t.pnl; });
+
+  const {y,m}=cur;
+  const firstDow=new Date(y,m,1).getDay();
+  const daysInMonth=new Date(y,m+1,0).getDate();
+  const monthLabel=new Date(y,m,1).toLocaleString('default',{month:'long',year:'numeric'});
+  const cells=[];
+  for(let i=0;i<firstDow;i++) cells.push(null);
+  for(let d=1;d<=daysInMonth;d++){
+    const ds=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    cells.push({d,ds,pnl:dayPnl[ds]??null});
+  }
+  while(cells.length%7) cells.push(null);
+
+  const maxAbs=Math.max(...Object.values(dayPnl).map(Math.abs),1);
+  const displayCcy=currency==='ALL'?'USD':currency;
+  const monthPrefix=`${y}-${String(m+1).padStart(2,'0')}`;
+  const monthTrades=filtered.filter(t=>t.exit_date.startsWith(monthPrefix));
+  const monthPnl=monthTrades.reduce((s,t)=>s+t.pnl,0);
+  const monthWins=monthTrades.filter(t=>t.pnl>0).length;
+
+  const prev=()=>setCur(({y,m})=>m===0?{y:y-1,m:11}:{y,m:m-1});
+  const next=()=>setCur(({y,m})=>m===11?{y:y+1,m:0}:{y,m:m+1});
+
+  return (
+    <div style={{flex:1,overflow:'auto',padding:'20px 24px'}}>
+      <div style={{display:'flex',alignItems:'center',marginBottom:20,gap:12}}>
+        {currencies.length>1&&(
+          <div style={{display:'flex',gap:4}}>
+            {currencies.map(c=>(
+              <button key={c} onClick={()=>setCurrency(c)} style={{padding:'4px 10px',fontSize:10,borderRadius:4,border:'none',background:currency===c?`${ACCENT}22`:'rgba(255,255,255,0.04)',color:currency===c?ACCENT:'#5a6478',fontFamily:'Space Mono',fontWeight:700}}>{c}</button>
+            ))}
+          </div>
+        )}
+        <div style={{flex:1}}/>
+        <button onClick={prev} style={{background:'none',border:'none',color:'#5a6478',cursor:'pointer',fontSize:20,lineHeight:1,padding:'0 4px'}}>‹</button>
+        <div style={{fontFamily:'Space Grotesk',fontWeight:600,color:'#c8d0e0',fontSize:14,minWidth:170,textAlign:'center'}}>{monthLabel}</div>
+        <button onClick={next} style={{background:'none',border:'none',color:'#5a6478',cursor:'pointer',fontSize:20,lineHeight:1,padding:'0 4px'}}>›</button>
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:3,marginBottom:3}}>
+        {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>(
+          <div key={d} style={{textAlign:'center',fontFamily:'Space Grotesk',fontSize:9,color:'#5a6478',letterSpacing:'.06em',padding:'4px 0'}}>{d}</div>
+        ))}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:3}}>
+        {cells.map((cell,i)=>{
+          if(!cell) return <div key={i}/>;
+          const {d,pnl}=cell, has=pnl!==null;
+          const intensity=has?Math.sqrt(Math.abs(pnl)/maxAbs):0;
+          const bg=has?(pnl>0?`rgba(5,150,144,${0.12+intensity*0.45})`:`rgba(206,49,75,${0.12+intensity*0.45})`):'rgba(255,255,255,0.02)';
+          return (
+            <div key={i} style={{background:bg,borderRadius:6,padding:'7px 8px',minHeight:52,display:'flex',flexDirection:'column',justifyContent:'space-between'}}>
+              <div style={{fontFamily:'Space Mono',fontSize:9,color:has?'#c8d0e0':'#3a4455'}}>{d}</div>
+              {has&&<div style={{fontFamily:'Space Mono',fontSize:9,fontWeight:700,color:pnl>0?GREEN:RED,textAlign:'right'}}>{(pnl>0?'+':'')+fmt(pnl,0)}</div>}
+            </div>
+          );
+        })}
+      </div>
+
+      {monthTrades.length>0&&(
+        <div style={{marginTop:16,display:'flex',gap:24,padding:'12px 16px',background:'rgba(255,255,255,0.03)',borderRadius:8,flexWrap:'wrap'}}>
+          <div><div style={S.hdr}>Month P&L</div><div style={{fontFamily:'Space Mono',fontSize:16,fontWeight:700,color:pnlColor(monthPnl)}}>{(monthPnl>=0?'+':'')+fmt(monthPnl,2)} {displayCcy}</div></div>
+          <div><div style={S.hdr}>Trades</div><div style={{fontFamily:'Space Mono',fontSize:16,fontWeight:700,color:'#c8d0e0'}}>{monthTrades.length}</div></div>
+          <div><div style={S.hdr}>Win Rate</div><div style={{fontFamily:'Space Mono',fontSize:16,fontWeight:700,color:monthWins/monthTrades.length>=0.4?GREEN:RED}}>{Math.round(monthWins/monthTrades.length*100)}%</div></div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── App root ──────────────────────────────────────────────────────────────────
 function App() {
   const [nav, setNav] = React.useState('dashboard');
-  const NAV_ITEMS = [{id:'dashboard',label:'Dash'},{id:'journal',label:'Journal'},{id:'analysis',label:'Analysis'},{id:'data',label:'Data'}];
+  const NAV_ITEMS = [{id:'dashboard',label:'Dash'},{id:'journal',label:'Journal'},{id:'analysis',label:'Analysis'},{id:'calendar',label:'Calendar'},{id:'data',label:'Data'}];
   return (
     <div className="app-root" style={{display:'flex',flexDirection:'column',height:'100vh',overflow:'hidden'}}>
       <TopNav active={nav} onNav={setNav}/>
@@ -1736,6 +1887,7 @@ function App() {
         {nav==='dashboard' && <Dashboard/>}
         {nav==='journal'   && <Journal/>}
         {nav==='analysis'  && <Analysis/>}
+        {nav==='calendar'  && <CalendarPage/>}
         {nav==='data'      && <DataPage/>}
       </div>
       {/* Mobile bottom nav */}
