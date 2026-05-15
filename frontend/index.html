@@ -2228,21 +2228,36 @@ function CalendarPage() {
 // ── App root ──────────────────────────────────────────────────────────────────
 function App() {
   const [nav, setNav] = React.useState('dashboard');
+  const [mounted, setMounted] = React.useState(()=>new Set(['dashboard']));
   const NAV_ITEMS = [{id:'dashboard',label:'Dash'},{id:'journal',label:'Journal'},{id:'analysis',label:'Analysis'},{id:'calendar',label:'Calendar'},{id:'data',label:'Data'}];
+
+  const goNav = id => {
+    setMounted(prev => { const n=new Set(prev); n.add(id); return n; });
+    setNav(id);
+  };
+
+  const TAB = {
+    dashboard: <Dashboard/>,
+    journal:   <Journal/>,
+    analysis:  <Analysis/>,
+    calendar:  <CalendarPage/>,
+    data:      <DataPage/>,
+  };
+
   return (
     <div className="app-root" style={{display:'flex',flexDirection:'column',height:'100vh',overflow:'hidden'}}>
-      <TopNav active={nav} onNav={setNav}/>
+      <TopNav active={nav} onNav={goNav}/>
       <div className="app-main" style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
-        {nav==='dashboard' && <Dashboard/>}
-        {nav==='journal'   && <Journal/>}
-        {nav==='analysis'  && <Analysis/>}
-        {nav==='calendar'  && <CalendarPage/>}
-        {nav==='data'      && <DataPage/>}
+        {Object.keys(TAB).map(id=> mounted.has(id) && (
+          <div key={id} style={{display:nav===id?'contents':'none'}}>
+            {TAB[id]}
+          </div>
+        ))}
       </div>
       {/* Mobile bottom nav */}
       <div className="mobile-nav">
         {NAV_ITEMS.map(n=>(
-          <button key={n.id} onClick={()=>setNav(n.id)} style={{
+          <button key={n.id} onClick={()=>goNav(n.id)} style={{
             flex:1,background:'transparent',border:'none',
             color:nav===n.id?ACCENT:'#5a6478',
             fontSize:9,fontFamily:'Space Grotesk',fontWeight:600,letterSpacing:'.06em',
