@@ -163,6 +163,16 @@ def get_portfolio():
 
     totals = _account_totals(open_pos, closed)
     total_usd = totals.get("USD", 0) + totals.get("HKD", 0) / _FX_HKD_USD
+
+    # Fetch review data for all open positions in one query
+    review_map: dict[tuple, dict] = {}
+    if open_pos:
+        raw_reviews = get_supabase().table("trade_reviews") \
+            .select("symbol,entry_date,setup_tag,market_condition").execute().data or []
+        open_keys = {(p.symbol, str(p.earliest_entry_date)) for p in open_pos if p.earliest_entry_date}
+        review_map = {(r["symbol"], r["entry_date"]): r for r in raw_reviews
+                      if (r["symbol"], r["entry_date"]) in open_keys}
+
     pos_rows = []
     for p in open_pos:
         price = prices.get(p.symbol)
@@ -172,6 +182,7 @@ def get_portfolio():
         notional = round(avg * qty, 2)
         notional_usd = round(notional / _FX_HKD_USD if p.currency == "HKD" else notional, 2)
         notional_pct = round(notional_usd / total_usd * 100, 2) if total_usd else None
+        rev = review_map.get((p.symbol, str(p.earliest_entry_date)), {})
         pos_rows.append({
             "symbol":         p.symbol,
             "exchange":       p.exchange,
@@ -183,6 +194,8 @@ def get_portfolio():
             "notional_usd":   notional_usd,
             "notional_pct":   notional_pct,
             "stop_loss":      p.initial_stop_loss,
+            "setup_tag":      rev.get("setup_tag"),
+            "market_condition": rev.get("market_condition"),
             "entry_date":     str(p.earliest_entry_date) if p.earliest_entry_date else None,
             "current_price":  round(price, 4) if price else None,
             "unrealized_pnl": pnl,

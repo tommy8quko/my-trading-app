@@ -927,7 +927,7 @@ function PositionRow({p, idx=0, onRefresh}) {
   return (
     <>
       <tr onClick={()=>setOpen(!open)} style={{cursor:'pointer',background:idx%2===1?'rgba(255,255,255,0.015)':'transparent'}}>
-        <td style={{font:'700 13px/1 "Space Mono",monospace',color:'#09CDDF'}}>{p.symbol} <span style={{color:'#5a6478',fontSize:9}}>{open?'▲':'▼'}</span></td>
+        <td style={{font:'700 13px/1 "Space Mono",monospace',color:(p.stop_loss&&p.setup_tag&&p.market_condition)?'#09CDDF':'#5a6478'}}>{p.symbol} <span style={{color:'#3a4258',fontSize:9}}>{open?'▲':'▼'}</span></td>
         <td style={{color:'#4a5670'}}>{p.currency}</td>
         <td>
           <span style={{display:'inline-flex',alignItems:'center',padding:'2px 6px',borderRadius:3,
