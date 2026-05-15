@@ -136,21 +136,44 @@ function TabBar({tabs, active, onChange}) {
 // ── Metric Strip ──────────────────────────────────────────────────────────────
 function MetricStrip({metrics, currency}) {
   if (!metrics) return null;
-  const panels = [
-    {label:'Total P&L',      val:(metrics.total_pnl>=0?'+':'')+fmt(metrics.total_pnl,2)+' '+currency, color:pnlColor(metrics.total_pnl)},
-    {label:'Win Rate',       val:pct(metrics.win_rate),                                               color:metrics.win_rate>=0.4?GREEN:RED},
-    {label:'Current Streak', val:metrics.current_streak?.count?`${metrics.current_streak.count}${metrics.current_streak.type}`:'—',
-      color:metrics.current_streak?.type==='W'?GREEN:metrics.current_streak?.type==='L'?RED:'#c8d0e0'},
-  ];
+  const wr = metrics.win_rate || 0;
+  const wrColor = wr >= 0.4 ? GREEN : RED;
+  const streakColor = metrics.current_streak?.type==='W' ? GREEN : metrics.current_streak?.type==='L' ? RED : '#c8d0e0';
+  const streakVal = metrics.current_streak?.count ? `${metrics.current_streak.count}${metrics.current_streak.type}` : '—';
+  const sep = {borderRight:'1px solid rgba(255,255,255,0.06)'};
+  const cell = {flex:1,display:'flex',flexDirection:'column',justifyContent:'center',padding:'0 20px'};
+  // Inline donut constants
+  const r=16, cx=22, cy=22, sw=4, circ=2*Math.PI*r;
+  const filled = circ * Math.min(Math.max(wr,0),1);
   return (
-    <div style={{height:60,display:'flex',background:'#0b0e14',borderBottom:'1px solid rgba(255,255,255,0.06)',flexShrink:0}}>
-      {panels.map((p,i)=>(
-        <div key={i} style={{flex:1,display:'flex',flexDirection:'column',justifyContent:'center',padding:'0 20px',
-          borderRight:i<panels.length-1?'1px solid rgba(255,255,255,0.06)':'none'}}>
-          <div style={S.hdr}>{p.label}</div>
-          <div style={{fontSize:18,fontFamily:'Space Mono',fontWeight:700,color:p.color||'#c8d0e0'}}>{p.val}</div>
+    <div style={{height:72,display:'flex',background:'#0b0e14',borderBottom:'1px solid rgba(255,255,255,0.06)',flexShrink:0}}>
+      {/* Total P&L */}
+      <div style={{...cell,...sep}}>
+        <div style={S.hdr}>Total P&L</div>
+        <div style={{fontSize:18,fontFamily:'Space Mono',fontWeight:700,color:pnlColor(metrics.total_pnl)}}>
+          {(metrics.total_pnl>=0?'+':'')+fmt(metrics.total_pnl,2)+' '+currency}
         </div>
-      ))}
+      </div>
+      {/* Win Rate with donut */}
+      <div style={{...sep,flex:1,display:'flex',alignItems:'center',padding:'0 20px',gap:14}}>
+        <svg width={44} height={44} style={{flexShrink:0}}>
+          <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={sw}/>
+          <circle cx={cx} cy={cy} r={r} fill="none" stroke={wrColor} strokeWidth={sw}
+            strokeDasharray={`${filled} ${circ-filled}`} strokeDashoffset={circ*0.25} strokeLinecap="round"/>
+          <text x={cx} y={cy+4} textAnchor="middle" fill="#c8d0e0" fontSize={10} fontFamily="Space Mono" fontWeight="700">
+            {Math.round(wr*100)}%
+          </text>
+        </svg>
+        <div>
+          <div style={S.hdr}>Win Rate</div>
+          <div style={{fontSize:18,fontFamily:'Space Mono',fontWeight:700,color:wrColor}}>{pct(wr)}</div>
+        </div>
+      </div>
+      {/* Current Streak */}
+      <div style={cell}>
+        <div style={S.hdr}>Current Streak</div>
+        <div style={{fontSize:18,fontFamily:'Space Mono',fontWeight:700,color:streakColor}}>{streakVal}</div>
+      </div>
     </div>
   );
 }
