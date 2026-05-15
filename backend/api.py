@@ -569,7 +569,7 @@ def get_trade_review(symbol: str, entry_date: str):
 
 @app.post("/api/trades/review")
 def save_trade_review(body: TradeReviewBody):
-    row = {k: v for k, v in body.model_dump().items() if v is not None}
+    row = body.model_dump()
     get_supabase().table("trade_reviews").upsert(
         row, on_conflict="symbol,entry_date"
     ).execute()
