@@ -964,6 +964,17 @@ function PositionRow({p, idx=0, onRefresh}) {
     setSaving(s=>({...s,[lotOrderId]:false}));
   };
 
+  const [deleting, setDeleting] = React.useState(false);
+  const deletePosition = async () => {
+    if (!confirm(`Delete all ${p.lots?.length||1} order(s) for ${p.symbol}? This cannot be undone.`)) return;
+    setDeleting(true);
+    try {
+      await Promise.all((p.lots||[]).map(l => api(`/orders/${l.order_id}`, {method:'DELETE'})));
+      await onRefresh();
+    } catch(e) { alert('Delete failed: ' + e.message); }
+    setDeleting(false);
+  };
+
   const saveReview = async () => {
     setSavingRev(true); setSaveMsg('');
     try {
@@ -1062,12 +1073,20 @@ function PositionRow({p, idx=0, onRefresh}) {
                   placeholder="What's your thesis? Any concerns or deviations from plan?"/>
               </div>
             </div>
-            <div style={{display:'flex',gap:8,alignItems:'center'}}>
-              <button style={{...S.btn(true),padding:'4px 10px',fontSize:11}}
-                onClick={e=>{e.stopPropagation();saveReview();}} disabled={savingRev}>
-                {savingRev?'Saving…':'Save Review'}
+            <div style={{display:'flex',gap:8,alignItems:'center',justifyContent:'space-between'}}>
+              <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                <button style={{...S.btn(true),padding:'4px 10px',fontSize:11}}
+                  onClick={e=>{e.stopPropagation();saveReview();}} disabled={savingRev}>
+                  {savingRev?'Saving…':'Save Review'}
+                </button>
+                {saveMsg && <span style={{fontSize:11,fontFamily:'Space Mono',color:saveMsg.startsWith('Error')?RED:GREEN}}>{saveMsg}</span>}
+              </div>
+              <button onClick={e=>{e.stopPropagation();deletePosition();}} disabled={deleting}
+                style={{padding:'4px 10px',fontSize:11,fontFamily:'Space Mono',fontWeight:700,
+                  background:'rgba(206,49,75,0.12)',border:'1px solid rgba(206,49,75,0.3)',
+                  borderRadius:4,color:RED,cursor:'pointer'}}>
+                {deleting ? 'Deleting…' : '✕ Delete Position'}
               </button>
-              {saveMsg && <span style={{fontSize:11,fontFamily:'Space Mono',color:saveMsg.startsWith('Error')?RED:GREEN}}>{saveMsg}</span>}
             </div>
           </td>
         </tr>
