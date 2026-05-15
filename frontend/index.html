@@ -61,10 +61,8 @@ window.addEventListener('unhandledrejection', function(e) {
 document.addEventListener('keydown', function(e) {
   if (e.key === 'F11') {
     e.preventDefault();
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen();
-    } else {
-      document.exitFullscreen();
+    if (window.pywebview && window.pywebview.api) {
+      window.pywebview.api.toggle_fullscreen();
     }
   }
 });
