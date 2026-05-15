@@ -2100,9 +2100,13 @@ function CalendarPage() {
   if (!trades) return <Spinner/>;
 
   const EXCL=new Set(['SGOV','BOXX']);
+  const FX=7.8;
+  const toUsd = t => t.currency==='HKD' ? t.pnl/FX : t.pnl;
+  const effectivePnl = t => currency==='ALL' ? toUsd(t) : t.pnl;
+
   const filtered=trades.filter(t=>(currency==='ALL'||t.currency===currency)&&!EXCL.has(t.symbol));
   const dayPnl={};
-  filtered.forEach(t=>{ dayPnl[t.exit_date]=(dayPnl[t.exit_date]||0)+t.pnl; });
+  filtered.forEach(t=>{ dayPnl[t.exit_date]=(dayPnl[t.exit_date]||0)+effectivePnl(t); });
 
   const {y,m}=cur;
   const firstDow=new Date(y,m,1).getDay();
@@ -2120,7 +2124,7 @@ function CalendarPage() {
   const displayCcy=currency==='ALL'?'USD':currency;
   const monthPrefix=`${y}-${String(m+1).padStart(2,'0')}`;
   const monthTrades=filtered.filter(t=>t.exit_date.startsWith(monthPrefix));
-  const monthPnl=monthTrades.reduce((s,t)=>s+t.pnl,0);
+  const monthPnl=monthTrades.reduce((s,t)=>s+effectivePnl(t),0);
   const monthWins=monthTrades.filter(t=>t.pnl>0).length;
 
   const prev=()=>setCur(({y,m})=>m===0?{y:y-1,m:11}:{y,m:m-1});
@@ -2182,7 +2186,7 @@ function CalendarPage() {
         const dayTrades = filtered.filter(t=>t.exit_date===selectedDay);
         if (!dayTrades.length) return null;
         const dayLabel = new Date(selectedDay+'T00:00:00').toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
-        const dayTotal = dayTrades.reduce((s,t)=>s+t.pnl,0);
+        const dayTotal = dayTrades.reduce((s,t)=>s+effectivePnl(t),0);
         return (
           <div style={{marginTop:20,background:'rgba(255,255,255,0.03)',borderRadius:10,padding:'16px 18px',border:`1px solid ${ACCENT}33`}}>
             <div style={{display:'flex',alignItems:'baseline',gap:12,marginBottom:14}}>
