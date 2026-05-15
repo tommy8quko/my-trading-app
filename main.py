@@ -18,7 +18,7 @@ if __name__ == "__main__":
     t.start()
 
     # Wait briefly for server to be ready
-    time.sleep(1.5)
+    time.sleep(2.5)
 
     # Open desktop window
     webview.create_window(
