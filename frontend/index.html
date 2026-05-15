@@ -2228,7 +2228,7 @@ function CalendarPage() {
 // ── App root ──────────────────────────────────────────────────────────────────
 function App() {
   const [nav, setNav] = React.useState('dashboard');
-  const [mounted, setMounted] = React.useState(()=>new Set(['dashboard']));
+  const [mounted, setMounted] = React.useState(()=>new Set(['dashboard','journal','analysis','calendar','data']));
   const NAV_ITEMS = [{id:'dashboard',label:'Dash'},{id:'journal',label:'Journal'},{id:'analysis',label:'Analysis'},{id:'calendar',label:'Calendar'},{id:'data',label:'Data'}];
 
   const goNav = id => {
