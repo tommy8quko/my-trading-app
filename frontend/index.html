@@ -909,6 +909,7 @@ function PositionRow({p, idx=0, onRefresh}) {
         body: JSON.stringify({symbol:p.symbol, entry_date:entryDate, ...form})});
       setReview({...form}); setSaveMsg('Saved');
       setTimeout(()=>setSaveMsg(''), 2000);
+      onRefresh();
     } catch(e) { setSaveMsg('Error: '+e.message); }
     setSavingRev(false);
   };
