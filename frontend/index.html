@@ -40,9 +40,25 @@ tr:hover td{background:rgba(255,255,255,0.02)}
 </style>
 </head>
 <body>
-<div id="boot" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#090c10;color:#5a6478;font-family:monospace;font-size:13px;z-index:9999">Starting…</div>
+<div id="boot" style="position:fixed;top:0;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#090c10;color:#5a6478;font-family:monospace;font-size:13px;z-index:9999;gap:12px">Starting…</div>
 <div id="root"></div>
-<script>document.addEventListener('DOMContentLoaded',function(){var b=document.getElementById('boot');if(b)setTimeout(function(){b.style.display='none'},8000);});</script>
+<script>
+window.onerror = function(msg, src, line, col, err) {
+  var b = document.getElementById('boot');
+  if (!b) return;
+  b.style.display = 'flex';
+  b.innerHTML = '<div style="color:#CE314B;font-size:14px;margin-bottom:8px">Error</div>'
+    + '<div style="color:#c8d0e0;font-size:12px;max-width:600px;word-break:break-all;text-align:center">' + String(msg) + '</div>'
+    + '<div style="color:#5a6478;font-size:10px;margin-top:4px">' + String(src) + ' line ' + line + '</div>';
+};
+window.addEventListener('unhandledrejection', function(e) {
+  var b = document.getElementById('boot');
+  if (!b) return;
+  b.style.display = 'flex';
+  b.innerHTML = '<div style="color:#CE314B;font-size:14px;margin-bottom:8px">Unhandled Promise Error</div>'
+    + '<div style="color:#c8d0e0;font-size:12px;max-width:600px;word-break:break-all;text-align:center">' + String(e.reason) + '</div>';
+});
+</script>
 <script type="text/babel">
 const API    = '/api';
 const ACCENT = '#4499ff';
