@@ -613,48 +613,73 @@ function Dashboard() {
   const [metricsCache, setMetricsCache] = React.useState({});
   const [currency,     setCurrency]     = React.useState('ALL');
   const [loading,      setLoading]      = React.useState(true);
+  const [loadErr,      setLoadErr]      = React.useState(null);
   const [spyData,      setSpyData]      = React.useState([]);
   const [posSort,      setPosSort]      = React.useState({col:null, dir:'asc'});
 
   React.useEffect(()=>{
     (async () => {
       setLoading(true);
-      const [p, allM] = await Promise.all([api('/portfolio'), api('/metrics?currency=ALL')]);
-      setData(p);
-      setMetricsCache({ALL: allM});
-      setLoading(false);
-      // Background: load individual currencies so switching is instant
-      const others = (allM.currencies || []).filter(c => c !== 'ALL');
-      others.forEach(ccy => {
-        api(`/metrics?currency=${ccy}`)
-          .then(m => setMetricsCache(prev => ({...prev, [ccy]: m})))
-          .catch(()=>{});
-      });
-      if (allM.equity_curve?.length) {
-        api(`/stats/spy?from_date=${allM.equity_curve[0].date}`).then(setSpyData).catch(()=>{});
+      setLoadErr(null);
+      try {
+        const [p, allM] = await Promise.all([api('/portfolio'), api('/metrics?currency=ALL')]);
+        setData(p);
+        setMetricsCache({ALL: allM});
+        setLoading(false);
+        // Background: load individual currencies so switching is instant
+        const others = (allM.currencies || []).filter(c => c !== 'ALL');
+        others.forEach(ccy => {
+          api(`/metrics?currency=${ccy}`)
+            .then(m => setMetricsCache(prev => ({...prev, [ccy]: m})))
+            .catch(()=>{});
+        });
+        if (allM.equity_curve?.length) {
+          api(`/stats/spy?from_date=${allM.equity_curve[0].date}`).then(setSpyData).catch(()=>{});
+        }
+      } catch(e) {
+        setLoadErr(e.message || 'Failed to connect to backend');
+        setLoading(false);
       }
     })();
   }, []);
 
   const metrics = metricsCache[currency];
-  if (loading || !data || !metrics) return <Spinner/>;
+  if (loading) return <Spinner/>;
+  if (loadErr) return (
+    <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:12,color:'#5a6478',fontFamily:'Space Mono',fontSize:12}}>
+      <div style={{color:RED,fontSize:13}}>Could not load data</div>
+      <div style={{maxWidth:340,textAlign:'center',lineHeight:1.6,color:'#4a5568'}}>{loadErr}</div>
+      <button style={{marginTop:8,padding:'6px 18px',background:ACCENT+'22',color:ACCENT,border:'none',borderRadius:4,fontFamily:'Space Mono',fontSize:11,cursor:'pointer'}}
+        onClick={()=>window.location.reload()}>
+        Retry
+      </button>
+    </div>
+  );
+  if (!data || !metrics) return <Spinner/>;
 
   // For ALL view, trades are USD-denominated; show 'USD' as the unit label
   const displayCcy = currency === 'ALL' ? 'USD' : currency;
   const currencies = metrics.currencies || ['USD'];
   const _p = v => v!=null ? (v>=0?'+':'')+fmt(v,2)+'%' : '—';
+  const streak = metrics.current_streak || {count:0,type:null};
   const kpis = [
-    {label:'Total P&L',            val:`${fmt(metrics.total_pnl,2)} ${displayCcy}`,                           color:pnlColor(metrics.total_pnl)},
-    {label:'Avg. Profit%',         val:metrics.avg_win_pct!=null?'+'+fmt(metrics.avg_win_pct,2)+'%':'—',      color:GREEN},
-    {label:'Avg. Loss%',           val:metrics.avg_loss_pct!=null?fmt(metrics.avg_loss_pct,2)+'%':'—',        color:RED},
-    {label:'R/R',                  val:metrics.rr_ratio!=null?fmt(metrics.rr_ratio,2)+' : 1':'—',             color:metrics.rr_ratio!=null?(metrics.rr_ratio>=1?GREEN:RED):'#c8d0e0'},
-    {label:'Win Rate',             val:pct(metrics.win_rate),                                                  color:metrics.win_rate>=0.4?GREEN:RED},
-    {label:'Kelly Formula',        val:metrics.kelly!=null?fmt(metrics.kelly*100,1)+'%':'—',                  color:metrics.kelly!=null?(metrics.kelly>0?GREEN:RED):'#c8d0e0'},
-    {label:'Profit Factor',        val:fmt(metrics.profit_factor,2),                                           color:metrics.profit_factor>=1?GREEN:RED},
-    {label:'Avg Win Holding Days', val:metrics.avg_hold_winners?fmt(metrics.avg_hold_winners,1)+'d':'—',      color:'#c8d0e0'},
-    {label:'Avg Loss Holding Days',val:metrics.avg_hold_losers?fmt(metrics.avg_hold_losers,1)+'d':'—',        color:'#c8d0e0'},
+    {label:'Total P&L',            val:`${fmt(metrics.total_pnl,2)} ${displayCcy}`,                               color:pnlColor(metrics.total_pnl)},
+    {label:'Avg. Profit%',         val:metrics.avg_win_pct!=null?'+'+fmt(metrics.avg_win_pct,2)+'%':'—',          color:GREEN},
+    {label:'Avg. Loss%',           val:metrics.avg_loss_pct!=null?fmt(metrics.avg_loss_pct,2)+'%':'—',            color:RED},
+    {label:'R/R',                  val:metrics.rr_ratio!=null?fmt(metrics.rr_ratio,2)+' : 1':'—',                 color:metrics.rr_ratio!=null?(metrics.rr_ratio>=1?GREEN:RED):'#c8d0e0'},
+    {label:'Win Rate',             val:pct(metrics.win_rate),                                                      color:metrics.win_rate>=0.4?GREEN:RED},
+    {label:'Kelly Formula',        val:metrics.kelly!=null?fmt(metrics.kelly*100,1)+'%':'—',                      color:metrics.kelly!=null?(metrics.kelly>0?GREEN:RED):'#c8d0e0'},
+    {label:'Profit Factor',        val:fmt(metrics.profit_factor,2),                                               color:metrics.profit_factor>=1?GREEN:RED},
+    {label:'Max Drawdown',         val:metrics.max_drawdown?fmt(metrics.max_drawdown,2)+' '+displayCcy:'—',       color:RED},
+    {label:'Avg Win Holding Days', val:metrics.avg_hold_winners?fmt(metrics.avg_hold_winners,1)+'d':'—',          color:'#c8d0e0'},
+    {label:'Avg Loss Holding Days',val:metrics.avg_hold_losers?fmt(metrics.avg_hold_losers,1)+'d':'—',            color:'#c8d0e0'},
     {label:'Biggest % Profit',     val:metrics.biggest_win_pct!=null?'+'+fmt(metrics.biggest_win_pct,2)+'%':'—', color:GREEN},
     {label:'Biggest % Loser',      val:metrics.biggest_loss_pct!=null?fmt(metrics.biggest_loss_pct,2)+'%':'—',   color:RED},
+    {label:'Current Streak',       val:streak.type?`${streak.count}${streak.type}`:'—',                           color:streak.type==='W'?GREEN:streak.type==='L'?RED:'#c8d0e0'},
+    {label:'Best Win Streak',      val:metrics.longest_win_streak!=null?String(metrics.longest_win_streak):'—',   color:GREEN},
+    {label:'Worst Loss Streak',    val:metrics.longest_loss_streak!=null?String(metrics.longest_loss_streak):'—', color:RED},
+    {label:'Trades',               val:metrics.total_trades!=null?String(metrics.total_trades):'—',               color:'#c8d0e0'},
+    {label:'Pending Review',       val:metrics.pending_review!=null?String(metrics.pending_review):'—',           color:metrics.pending_review>0?'#f5a623':'#c8d0e0'},
   ];
 
   const EXCL = new Set(['SGOV','BOXX']);
