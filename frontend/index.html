@@ -304,7 +304,7 @@ function PanelC({trades}) {
               <div style={{flex:1,height:4,background:'rgba(255,255,255,0.05)',borderRadius:2,overflow:'hidden'}}>
                 <div style={{width:`${barW*100}%`,height:'100%',background:win?GREEN:RED,opacity:0.75,borderRadius:2}}/>
               </div>
-              <span style={{fontFamily:'Space Grotesk',fontSize:9,color:win?GREEN:RED,width:36,textAlign:'right',flexShrink:0}}>{pctVal}</span>
+              <span style={{fontFamily:'Space Mono',fontSize:10,fontWeight:700,color:win?GREEN:RED,width:46,textAlign:'right',flexShrink:0}}>{pctVal}</span>
               <span style={{fontFamily:'Space Mono',fontSize:11,fontWeight:700,color:win?GREEN:RED,width:68,textAlign:'right',flexShrink:0}}>{pnlLabel}</span>
             </div>
           );
@@ -842,7 +842,7 @@ function Dashboard() {
                       <SortTh col="direction"      label="Dir"                  sort={posSort} onSort={tog}/>
                       <SortTh col="quantity"       label="Qty"                  sort={posSort} onSort={tog} align="right"/>
                       <SortTh col="avg_entry"      label="Avg Entry"            sort={posSort} onSort={tog} align="right"/>
-                      <SortTh col="notional_pct"   label="Notional (% of acct)" sort={posSort} onSort={tog} align="right"/>
+                      <SortTh col="notional_usd"   label="Notional (% of acct)" sort={posSort} onSort={tog} align="right"/>
                       <SortTh col="stop_loss"      label="Stop"                 sort={posSort} onSort={tog} align="right"/>
                       <SortTh col="unrealized_pnl" label="P&L"                  sort={posSort} onSort={tog} align="right"/>
                       <SortTh col="pct_return"     label="% Ret"                sort={posSort} onSort={tog} align="right"/>

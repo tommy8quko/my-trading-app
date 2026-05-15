@@ -162,6 +162,7 @@ def get_portfolio():
         return round(pnl, 2), round(pct, 2) if pct is not None else None
 
     totals = _account_totals(open_pos, closed)
+    total_usd = totals.get("USD", 0) + totals.get("HKD", 0) / _FX_HKD_USD
     pos_rows = []
     for p in open_pos:
         price = prices.get(p.symbol)
@@ -169,8 +170,8 @@ def get_portfolio():
         qty = p.total_quantity
         avg = p.avg_entry_price
         notional = round(avg * qty, 2)
-        acct_total = totals.get(p.currency, 0)
-        notional_pct = round(notional / acct_total * 100, 2) if acct_total else None
+        notional_usd = round(notional / _FX_HKD_USD if p.currency == "HKD" else notional, 2)
+        notional_pct = round(notional_usd / total_usd * 100, 2) if total_usd else None
         pos_rows.append({
             "symbol":         p.symbol,
             "exchange":       p.exchange,
@@ -179,6 +180,7 @@ def get_portfolio():
             "quantity":       qty,
             "avg_entry":      round(avg, 4),
             "notional":       notional,
+            "notional_usd":   notional_usd,
             "notional_pct":   notional_pct,
             "stop_loss":      p.initial_stop_loss,
             "entry_date":     str(p.earliest_entry_date) if p.earliest_entry_date else None,
