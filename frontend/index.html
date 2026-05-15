@@ -2237,8 +2237,8 @@ function CalendarPage({version, year}) {
                 outline:isSel?`2px solid rgba(255,255,255,0.6)`:'2px solid transparent',
                 outlineOffset:'-1px',
               }}>
-              <div style={{textAlign:'right',fontFamily:'Space Mono',fontSize:9,
-                color:has?'rgba(255,255,255,0.55)':'#3a4455'}}>{d}</div>
+              <div style={{textAlign:'right',fontFamily:'Space Grotesk',fontSize:12,fontWeight:600,
+                color:has?'rgba(255,255,255,0.9)':'#3a4455'}}>{d}</div>
               {has&&<>
                 <div style={{fontFamily:'Space Mono',fontSize:11,fontWeight:700,color:'#ffffff',lineHeight:1.2}}>
                   {pnl<0?'-':''}${fmt(Math.abs(pnl),2)}
