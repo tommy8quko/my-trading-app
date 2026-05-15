@@ -628,6 +628,42 @@ function Dashboard() {
   const [spyData,      setSpyData]      = React.useState([]);
   const [posSort,      setPosSort]      = React.useState({col:null, dir:'asc'});
 
+  // ── Panel resize state ──────────────────────────────────────────────────────
+  const [kpiW,     setKpiW]     = React.useState(180);  // px
+  const [midFlex,  setMidFlex]  = React.useState(52);   // % of mid+right row
+  const [eqFlex,   setEqFlex]   = React.useState(60);   // % of middle col height
+  const [posFlex,  setPosFlex]  = React.useState(35);   // % of right-side height for positions
+  const [activeRH, setActiveRH] = React.useState(null);
+  const midRowRef = React.useRef(null);
+  const midColRef = React.useRef(null);
+  const rSideRef  = React.useRef(null);
+
+  function startDrag(e, which) {
+    e.preventDefault();
+    const axis = (which==='kpi'||which==='mid') ? 'x' : 'y';
+    const start = axis==='x' ? e.clientX : e.clientY;
+    const snap = {kpi:kpiW, mid:midFlex, eq:eqFlex, pos:posFlex}[which];
+    setActiveRH(which);
+    const move = mv => {
+      const d = (axis==='x' ? mv.clientX : mv.clientY) - start;
+      if (which==='kpi') {
+        setKpiW(Math.max(120, Math.min(300, snap+d)));
+      } else if (which==='mid') {
+        const W = midRowRef.current?.clientWidth||800;
+        setMidFlex(Math.max(20, Math.min(80, snap+d/W*100)));
+      } else if (which==='eq') {
+        const H = midColRef.current?.clientHeight||400;
+        setEqFlex(Math.max(20, Math.min(80, snap+d/H*100)));
+      } else {
+        const H = rSideRef.current?.clientHeight||500;
+        setPosFlex(Math.max(10, Math.min(60, snap-d/H*100)));
+      }
+    };
+    const up = () => { setActiveRH(null); window.removeEventListener('mousemove',move); window.removeEventListener('mouseup',up); };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }
+
   React.useEffect(()=>{
     (async () => {
       setLoading(true);
@@ -705,8 +741,8 @@ function Dashboard() {
       {/* ── Main body: KPI col (full height) + right side ───────────────── */}
       <div className="dash-top" style={{flex:1,display:'flex',overflow:'hidden',minHeight:0}}>
 
-        {/* KPI column — full height */}
-        <div className="dash-kpi" style={{width:180,display:'flex',flexDirection:'column',flexShrink:0,overflow:'auto',borderRight:'1px solid rgba(255,255,255,0.06)'}}>
+        {/* KPI column — resizable width */}
+        <div className="dash-kpi" style={{width:kpiW,display:'flex',flexDirection:'column',flexShrink:0,overflow:'auto'}}>
           {currencies.length > 1 && (
             <div style={{padding:'10px 12px 4px',display:'flex',gap:6}}>
               {currencies.map(c=>(
@@ -733,29 +769,31 @@ function Dashboard() {
             </div>
           ))}
         </div>
+        <ResizeHandle dir='v' active={activeRH==='kpi'} onMouseDown={e=>startDrag(e,'kpi')}/>
 
         {/* Right side: metric strip + charts + open positions */}
-        <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
+        <div ref={rSideRef} style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
 
           {/* Metric strip */}
           <MetricStrip metrics={metrics} currency={displayCcy}/>
 
           {/* Middle + right panels */}
-          <div style={{flex:3,display:'flex',overflow:'hidden',minHeight:0}}>
+          <div ref={midRowRef} style={{flex:100-posFlex,display:'flex',overflow:'hidden',minHeight:0}}>
 
             {/* Middle: equity curve + holding chart */}
-            <div className="dash-mid" style={{flex:52,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0,borderRight:'1px solid rgba(255,255,255,0.06)'}}>
-              <div className="dash-equity" style={{flex:3,overflow:'hidden',padding:'14px 18px',display:'flex',flexDirection:'column',minHeight:0}}>
+            <div ref={midColRef} className="dash-mid" style={{flex:midFlex,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
+              <div className="dash-equity" style={{flex:eqFlex,overflow:'hidden',padding:'14px 18px',display:'flex',flexDirection:'column',minHeight:0}}>
                 <EquityCurve data={metrics.equity_curve} trades={closedForCurrency} spyData={spyData}/>
               </div>
-              <div style={{flex:2,borderTop:'1px solid rgba(255,255,255,0.06)',minHeight:0}}>
+              <ResizeHandle dir='h' active={activeRH==='eq'} onMouseDown={e=>startDrag(e,'eq')}/>
+              <div style={{flex:100-eqFlex,minHeight:0}}>
                 <HoldingBarChart trades={closedForCurrency}/>
               </div>
             </div>
+            <ResizeHandle dir='v' active={activeRH==='mid'} onMouseDown={e=>startDrag(e,'mid')}/>
 
             {/* Right: Edge stats + Setup + PanelC */}
-            <div style={{flex:48,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:140}}>
-              {/* Edge stats bar: Expectancy R | R/R | Profit Factor */}
+            <div style={{flex:100-midFlex,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:140}}>
               {(()=>{
                 const cells = [
                   {label:'Expectancy',    val: metrics.expectancy_r!=null ? fmt(metrics.expectancy_r,2)+'R' : '—', color: metrics.expectancy_r>0?GREEN:metrics.expectancy_r<0?RED:'#c8d0e0'},
@@ -777,9 +815,10 @@ function Dashboard() {
               <PanelC trades={closedForCurrency}/>
             </div>
           </div>
+          <ResizeHandle dir='h' active={activeRH==='pos'} onMouseDown={e=>startDrag(e,'pos')}/>
 
-          {/* ── Open Positions (aligned with equity + right panels) ────── */}
-          <div className="dash-positions" style={{flex:2,minHeight:0,overflow:'auto',padding:'10px 18px',borderTop:'1px solid rgba(255,255,255,0.06)'}}>
+          {/* ── Open Positions ────── */}
+          <div className="dash-positions" style={{flex:posFlex,minHeight:0,overflow:'auto',padding:'10px 18px'}}>
             <div style={{...S.hdr,marginBottom:10}}>Open Positions ({data.open_positions.length})</div>
             {data.open_positions.length === 0
               ? <div style={{color:'#5a6478',fontSize:12}}>No open positions</div>
