@@ -185,7 +185,7 @@ def get_metrics(currency: str = "USD"):
         "total_pnl":           round(m.get("total_pnl", 0), 2),
         "win_rate":            round(m.get("win_rate", 0), 4),
         "profit_factor":       round(m.get("profit_factor", 0), 2),
-        "expectancy_r":        round(m.get("expectancy_r") or 0, 2),
+        "expectancy_r":        round(m.get("expectancy_r"), 2) if m.get("expectancy_r") is not None else None,
         "rr_ratio":            round(m.get("rr_ratio"), 2) if m.get("rr_ratio") is not None else None,
         "avg_win":             round(m.get("avg_win", 0), 2),
         "avg_loss":            round(m.get("avg_loss", 0), 2),
