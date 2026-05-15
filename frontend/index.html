@@ -713,10 +713,10 @@ function Dashboard() {
   return (
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
 
-      {/* ── 3-column top section ─────────────────────────────────────────── */}
-      <div className="dash-top" style={{flex:3,display:'flex',overflow:'hidden',minHeight:0}}>
+      {/* ── Main body: KPI col (full height) + right side ───────────────── */}
+      <div className="dash-top" style={{flex:1,display:'flex',overflow:'hidden',minHeight:0}}>
 
-        {/* KPI column — full height, no metric strip above */}
+        {/* KPI column — full height */}
         <div className="dash-kpi" style={{width:180,display:'flex',flexDirection:'column',flexShrink:0,overflow:'auto',borderRight:'1px solid rgba(255,255,255,0.06)'}}>
           {currencies.length > 1 && (
             <div style={{padding:'10px 12px 4px',display:'flex',gap:6}}>
@@ -745,14 +745,14 @@ function Dashboard() {
           ))}
         </div>
 
-        {/* Right side: metric strip + middle + panels */}
+        {/* Right side: metric strip + charts + open positions */}
         <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
 
-          {/* Metric strip aligned with equity curve */}
+          {/* Metric strip */}
           <MetricStrip metrics={metrics} currency={displayCcy}/>
 
           {/* Middle + right panels */}
-          <div style={{flex:1,display:'flex',overflow:'hidden',minHeight:0}}>
+          <div style={{flex:3,display:'flex',overflow:'hidden',minHeight:0}}>
 
             {/* Middle: equity curve + holding chart */}
             <div className="dash-mid" style={{flex:52,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0,borderRight:'1px solid rgba(255,255,255,0.06)'}}>
@@ -788,37 +788,37 @@ function Dashboard() {
               <PanelC trades={closedForCurrency}/>
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* ── Open Positions (full width) ──────────────────────────────────── */}
-      <div className="dash-positions" style={{flex:2,minHeight:0,overflow:'auto',padding:'10px 18px',borderTop:'1px solid rgba(255,255,255,0.06)'}}>
-        <div style={{...S.hdr,marginBottom:10}}>Open Positions ({data.open_positions.length})</div>
-        {data.open_positions.length === 0
-          ? <div style={{color:'#5a6478',fontSize:12}}>No open positions</div>
-          : (() => {
-            const tog = col => setPosSort(s=>({col, dir:s.col===col&&s.dir==='asc'?'desc':'asc'}));
-            const rows = applySort(data.open_positions, posSort.col, posSort.dir);
-            return (
-              <table>
-                <thead style={{position:'sticky',top:0,background:'#090c10',zIndex:10}}><tr>
-                  <SortTh col="symbol"         label="Symbol"    sort={posSort} onSort={tog}/>
-                  <SortTh col="currency"       label="Ccy"       sort={posSort} onSort={tog}/>
-                  <SortTh col="direction"      label="Dir"       sort={posSort} onSort={tog}/>
-                  <SortTh col="quantity"       label="Qty"       sort={posSort} onSort={tog} align="right"/>
-                  <SortTh col="avg_entry"      label="Avg Entry" sort={posSort} onSort={tog} align="right"/>
-                  <SortTh col="notional_pct"   label="Notional%" sort={posSort} onSort={tog} align="right"/>
-                  <SortTh col="stop_loss"      label="Stop"      sort={posSort} onSort={tog} align="right"/>
-                  <SortTh col="unrealized_pnl" label="P&L"       sort={posSort} onSort={tog} align="right"/>
-                  <SortTh col="pct_return"     label="% Ret"     sort={posSort} onSort={tog} align="right"/>
-                </tr></thead>
-                <tbody>
-                  {rows.map((p,i)=><PositionRow key={i} p={p} idx={i} onRefresh={()=>api('/portfolio').then(setData)}/>)}
-                </tbody>
-              </table>
-            );
-          })()
-        }
+          {/* ── Open Positions (aligned with equity + right panels) ────── */}
+          <div className="dash-positions" style={{flex:2,minHeight:0,overflow:'auto',padding:'10px 18px',borderTop:'1px solid rgba(255,255,255,0.06)'}}>
+            <div style={{...S.hdr,marginBottom:10}}>Open Positions ({data.open_positions.length})</div>
+            {data.open_positions.length === 0
+              ? <div style={{color:'#5a6478',fontSize:12}}>No open positions</div>
+              : (() => {
+                const tog = col => setPosSort(s=>({col, dir:s.col===col&&s.dir==='asc'?'desc':'asc'}));
+                const rows = applySort(data.open_positions, posSort.col, posSort.dir);
+                return (
+                  <table>
+                    <thead style={{position:'sticky',top:0,background:'#090c10',zIndex:10}}><tr>
+                      <SortTh col="symbol"         label="Symbol"               sort={posSort} onSort={tog}/>
+                      <SortTh col="currency"       label="Ccy"                  sort={posSort} onSort={tog}/>
+                      <SortTh col="direction"      label="Dir"                  sort={posSort} onSort={tog}/>
+                      <SortTh col="quantity"       label="Qty"                  sort={posSort} onSort={tog} align="right"/>
+                      <SortTh col="avg_entry"      label="Avg Entry"            sort={posSort} onSort={tog} align="right"/>
+                      <SortTh col="notional_pct"   label="Notional (% of acct)" sort={posSort} onSort={tog} align="right"/>
+                      <SortTh col="stop_loss"      label="Stop"                 sort={posSort} onSort={tog} align="right"/>
+                      <SortTh col="unrealized_pnl" label="P&L"                  sort={posSort} onSort={tog} align="right"/>
+                      <SortTh col="pct_return"     label="% Ret"                sort={posSort} onSort={tog} align="right"/>
+                    </tr></thead>
+                    <tbody>
+                      {rows.map((p,i)=><PositionRow key={i} p={p} idx={i} onRefresh={()=>api('/portfolio').then(setData)}/>)}
+                    </tbody>
+                  </table>
+                );
+              })()
+            }
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -896,9 +896,8 @@ function PositionRow({p, idx=0, onRefresh}) {
         <td style={{textAlign:'right'}}>{fmt(p.quantity)}</td>
         <td style={{textAlign:'right'}}>{fmt(p.avg_entry,4)}</td>
         <td style={{textAlign:'right',color:'#c8d0e0'}}>
-          {p.notional_pct!=null
-            ? <span title={`Notional: ${fmt(p.notional,0)} ${p.currency}`}>{fmt(p.notional_pct,1)}%</span>
-            : fmt(p.notional,0)}
+          {fmt(p.notional,0)}
+          {p.notional_pct!=null && <span style={{color:'#5a6478',fontSize:10,marginLeft:4}}>({fmt(p.notional_pct,1)}%)</span>}
         </td>
         <td style={{textAlign:'right',color:RED}}>{p.stop_loss ? fmt(p.stop_loss,4) : '—'}</td>
         <td style={{textAlign:'right',fontWeight:700,color:p.unrealized_pnl!=null?pnlColor(p.unrealized_pnl):'#5a6478'}}>
