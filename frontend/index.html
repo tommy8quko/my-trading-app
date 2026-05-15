@@ -1777,10 +1777,18 @@ function ReviewItem({item, onRefresh}) {
         opts.body = JSON.stringify({stop_loss: sl > 0 ? sl : null});
       }
       const res = await api(`/review/${item.id}/${action}`, opts);
-      if (action === 'approve' && res.closed_trades?.length) {
-        setClosedTrades(res.closed_trades);
+      if (action === 'approve' && ['SELL','COVER'].includes(item.action)) {
+        // Always show outcome modal for sell orders, with API data or a fallback
+        const trades = res.closed_trades?.length ? res.closed_trades : [{
+          symbol: item.symbol,
+          direction: item.action === 'SELL' ? 'LONG' : 'SHORT',
+          entry_date: null,
+          exit_date: item.normalized?.order_date || null,
+          pnl: null,
+          currency: item.normalized?.currency || '',
+        }];
+        setClosedTrades(trades);
         setBusy(false);
-        // onRefresh deferred — modal's close button will trigger it
       } else {
         await onRefresh();
       }
@@ -1798,7 +1806,7 @@ function ReviewItem({item, onRefresh}) {
         padding:'10px 14px',background:'#0f1318',border:'none',color:'#c8d0e0',textAlign:'left',
       }}>
         <span style={{display:'flex',alignItems:'center',gap:8}}>
-          <span style={{fontSize:10,fontFamily:'Space Mono',fontWeight:700,color:ACCENT,textTransform:'uppercase',letterSpacing:'.06em'}}>{item.action}</span>
+          <span style={{fontSize:10,fontFamily:'Space Mono',fontWeight:700,color:['BUY','SHORT'].includes(item.action)?GREEN:RED,textTransform:'uppercase',letterSpacing:'.06em'}}>{item.action}</span>
           <span style={S.ticker}>{item.symbol}</span>
           <span style={{color:'#5a6478',fontFamily:'Space Mono'}}>×{item.quantity}</span>
           <span style={{color:'#5a6478',fontSize:10,letterSpacing:'.06em'}}>{item.broker}</span>
@@ -1890,18 +1898,18 @@ function OutcomeModal({trades, onClose}) {
 
         {trades.map(t => {
           const key = `${t.symbol}|${t.entry_date}`;
-          const isWin = t.pnl >= 0;
+          const isWin = t.pnl != null ? t.pnl >= 0 : null;
           return (
             <div key={key} style={{marginBottom:12,padding:'12px 14px',background:'rgba(255,255,255,0.03)',
-              borderRadius:6,border:`1px solid ${isWin?'rgba(5,150,144,0.2)':'rgba(206,49,75,0.2)'}`}}>
+              borderRadius:6,border:`1px solid ${isWin===true?'rgba(5,150,144,0.2)':isWin===false?'rgba(206,49,75,0.2)':'rgba(255,255,255,0.08)'}`}}>
               <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
                 <span style={S.ticker}>{t.symbol}</span>
                 <span style={{fontSize:9,fontFamily:'Space Mono',fontWeight:700,
                   color:t.direction==='LONG'?'#088885':'#F96E8F'}}>{t.direction}</span>
                 <span style={{fontSize:10,color:'#5a6478',fontFamily:'Space Mono'}}>{t.exit_date}</span>
                 <span style={{fontFamily:'Space Mono',fontSize:13,fontWeight:700,
-                  color:isWin?GREEN:RED,marginLeft:'auto'}}>
-                  {isWin?'+':''}{fmt(t.pnl,2)} {t.currency}
+                  color:isWin===true?GREEN:isWin===false?RED:'#5a6478',marginLeft:'auto'}}>
+                  {t.pnl!=null?(isWin?'+':'')+fmt(t.pnl,2)+' '+t.currency:'P&L pending'}
                 </span>
               </div>
               <textarea
