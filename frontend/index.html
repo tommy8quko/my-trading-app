@@ -278,14 +278,14 @@ function PanelC({trades}) {
   const [hovered, setHovered] = React.useState(null);
   if (!trades||!trades.length) return <div style={{flex:1}}/>;
   const recent = trades.slice(0,10);
-  const maxAbs = Math.max(...recent.map(t=>Math.abs(t.pnl)), 1);
+  const logMax = Math.log1p(Math.max(...recent.map(t=>Math.abs(t.pnl)), 1));
   return (
     <div style={{flex:1,overflow:'hidden',padding:'14px 20px',display:'flex',flexDirection:'column',minHeight:0}}>
       <div style={{fontSize:9.5,fontWeight:600,color:'#323d52',textTransform:'uppercase',letterSpacing:'0.1em',fontFamily:'Space Grotesk',marginBottom:10,flexShrink:0}}>Recent Trades</div>
       <div style={{flex:1,overflowY:'auto',display:'flex',flexDirection:'column',gap:3}}>
         {recent.map((t,i)=>{
           const win = t.pnl >= 0;
-          const barW = Math.abs(t.pnl) / maxAbs;
+          const barW = Math.log1p(Math.abs(t.pnl)) / logMax;
           const pctVal = t.pct_return != null ? ((t.pct_return>=0?'+':'')+fmt(t.pct_return,1)+'%') : '—';
           const pnlLabel = (t.pnl>=0?'+':'')+fmt(t.pnl,0);
           const dateLabel = (t.exit_date||'').slice(5);
