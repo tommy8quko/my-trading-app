@@ -256,20 +256,40 @@ def summary_dict(trades: list[ClosedTrade]) -> dict[str, Any]:
     losers  = [t for t in trades if t.realized_pnl <= 0]
     avg_hold_w = (sum((t.exit_date - t.entry_date).days for t in winners) / len(winners)) if winners else 0
     avg_hold_l = (sum((t.exit_date - t.entry_date).days for t in losers)  / len(losers))  if losers  else 0
+
+    def _pct(t):
+        if not t.avg_entry: return None
+        return (t.avg_exit - t.avg_entry) / t.avg_entry * 100 if t.direction == "LONG" \
+               else (t.avg_entry - t.avg_exit) / t.avg_entry * 100
+
+    win_pcts  = [p for t in winners for p in [_pct(t)] if p is not None]
+    loss_pcts = [p for t in losers  for p in [_pct(t)] if p is not None]
+    all_pcts  = [p for t in trades  for p in [_pct(t)] if p is not None]
+
+    aw = avg_win(trades)
+    al = avg_loss(trades)   # negative
+    wr = win_rate(trades) or 0
+    kelly = round(wr - (1 - wr) / (aw / abs(al)), 4) if aw and al else None
+
     return {
-        "total_trades": len(trades),
-        "win_rate": win_rate(trades),
-        "profit_factor": profit_factor(trades),
-        "expectancy_r": expectancy_r(trades),
-        "rr_ratio": rr_ratio(trades),
-        "avg_win": avg_win(trades),
-        "avg_loss": avg_loss(trades),
-        "total_pnl": sum(t.realized_pnl for t in trades),
-        "avg_holding_days": avg_holding_days(trades),
-        "max_drawdown": max_drawdown(trades),
-        "current_streak": current_streak(trades),
-        "longest_win_streak": longest_win_streak(trades),
+        "total_trades":      len(trades),
+        "win_rate":          wr,
+        "profit_factor":     profit_factor(trades),
+        "expectancy_r":      expectancy_r(trades),
+        "rr_ratio":          rr_ratio(trades),
+        "avg_win":           aw,
+        "avg_loss":          al,
+        "total_pnl":         sum(t.realized_pnl for t in trades),
+        "avg_holding_days":  avg_holding_days(trades),
+        "max_drawdown":      max_drawdown(trades),
+        "current_streak":    current_streak(trades),
+        "longest_win_streak":  longest_win_streak(trades),
         "longest_loss_streak": longest_loss_streak(trades),
-        "avg_hold_winners": round(avg_hold_w, 1),
-        "avg_hold_losers":  round(avg_hold_l, 1),
+        "avg_hold_winners":  round(avg_hold_w, 1),
+        "avg_hold_losers":   round(avg_hold_l, 1),
+        "avg_win_pct":       round(sum(win_pcts)  / len(win_pcts),  2) if win_pcts  else None,
+        "avg_loss_pct":      round(sum(loss_pcts) / len(loss_pcts), 2) if loss_pcts else None,
+        "kelly":             kelly,
+        "biggest_win_pct":   round(max(all_pcts), 2) if all_pcts else None,
+        "biggest_loss_pct":  round(min(all_pcts), 2) if all_pcts else None,
     }

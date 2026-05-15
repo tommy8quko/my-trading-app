@@ -197,6 +197,11 @@ def get_metrics(currency: str = "USD"):
         "longest_loss_streak": m.get("longest_loss_streak", 0),
         "avg_hold_winners":    m.get("avg_hold_winners", 0),
         "avg_hold_losers":     m.get("avg_hold_losers", 0),
+        "avg_win_pct":         m.get("avg_win_pct"),
+        "avg_loss_pct":        m.get("avg_loss_pct"),
+        "kelly":               m.get("kelly"),
+        "biggest_win_pct":     m.get("biggest_win_pct"),
+        "biggest_loss_pct":    m.get("biggest_loss_pct"),
         "equity_curve":        [{"date": str(d), "pnl": round(v, 2)} for d, v in cum],
         "currencies":          currencies_out,
     }
