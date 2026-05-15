@@ -166,6 +166,13 @@ function TopNav({active, onNav, year, onYearChange}) {
         )}
         <button style={btnStyle} onClick={()=>onYearChange(year+1)}>▶</button>
       </div>
+      <button title="Position Sizing Calculator (F1)"
+        onClick={()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'F1',bubbles:true}))}
+        style={{marginLeft:12,background:'rgba(99,179,237,0.08)',border:'1px solid rgba(99,179,237,0.2)',
+          borderRadius:4,color:'#63b3ed',fontSize:9,fontFamily:'Space Mono',fontWeight:700,
+          padding:'3px 7px',cursor:'pointer',letterSpacing:'.05em',flexShrink:0}}>
+        F1
+      </button>
     </div>
   );
 }
@@ -2314,13 +2321,188 @@ function CalendarPage({version, year}) {
   );
 }
 
+// ── Position Sizing Calculator ────────────────────────────────────────────────
+function CalcPanel({onClose}) {
+  const [dir,    setDir]    = React.useState('LONG');
+  const [qty,    setQty]    = React.useState('');
+  const [entry,  setEntry]  = React.useState('');
+  const [target, setTarget] = React.useState('');
+  const [stop,   setStop]   = React.useState('');
+  const [riskPct,setRiskPct]= React.useState('');
+  const [mode,   setMode]   = React.useState('risk');   // 'risk' | 'qty' | 'stop'
+  const [portfolio, setPortfolio] = React.useState(null);
+
+  React.useEffect(()=>{
+    api('/portfolio').then(d=>{
+      const t = d.account_totals || {};
+      setPortfolio(round2((t.USD||0) + (t.HKD||0) / 7.8));
+    }).catch(()=>{});
+  }, []);
+
+  React.useEffect(()=>{
+    const onKey = e => { if (e.key==='Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const round2 = v => Math.round(v * 100) / 100;
+  const E = parseFloat(entry), S = parseFloat(stop);
+  const Q = parseInt(qty), R = parseFloat(riskPct), T = parseFloat(target);
+  const P = portfolio;
+
+  const riskPerUnit = (E && S) ? (dir==='LONG' ? E - S : S - E) : null;
+
+  // Solved values
+  let solvedQty=null, solvedStop=null, solvedRisk=null;
+  if (mode==='risk' && Q>0 && riskPerUnit!=null && riskPerUnit>0 && P)
+    solvedRisk = round2((Q * riskPerUnit / P) * 100);
+  if (mode==='qty'  && R>0 && riskPerUnit!=null && riskPerUnit>0 && P)
+    solvedQty  = Math.floor((P * R / 100) / riskPerUnit);
+  if (mode==='stop' && Q>0 && R>0 && E && P) {
+    const riskAmt = P * R / 100;
+    solvedStop = round2(dir==='LONG' ? E - riskAmt/Q : E + riskAmt/Q);
+  }
+
+  const displayQty   = mode==='qty'  ? solvedQty  : (Q||null);
+  const displayStop  = mode==='stop' ? solvedStop  : (S||null);
+  const displayRisk  = mode==='risk' ? solvedRisk  : (R||null);
+  const displayEntry = E||null;
+
+  const riskAmt = (displayQty&&displayEntry&&displayStop)
+    ? round2(Math.abs(displayEntry-displayStop)*displayQty) : null;
+  const notional = (displayQty&&displayEntry) ? round2(displayQty*displayEntry) : null;
+  const notionalPct = (notional&&P) ? round2(notional/P*100) : null;
+  const rr = (displayEntry&&displayStop&&T)
+    ? round2(Math.abs(T-displayEntry)/Math.abs(displayEntry-displayStop)) : null;
+
+  const inSt = {
+    width:'100%',padding:'5px 8px',background:'#0a0d12',
+    border:'1px solid rgba(255,255,255,0.12)',borderRadius:4,
+    color:'#c8d0e0',fontSize:12,fontFamily:'Space Mono',outline:'none',boxSizing:'border-box',
+  };
+  const solvedSt = {...inSt, background:'rgba(68,153,255,0.08)', border:`1px solid ${ACCENT}55`, color:ACCENT, fontWeight:700};
+  const modeBtn = active => ({
+    flex:1,padding:'4px 0',fontSize:10,borderRadius:4,border:'none',cursor:'pointer',
+    background:active?`${ACCENT}22`:'rgba(255,255,255,0.05)',
+    color:active?ACCENT:'#5a6478',fontFamily:'Space Mono',fontWeight:700,
+  });
+  const dirBtn = active => ({
+    flex:1,padding:'5px 0',fontSize:11,borderRadius:4,border:'none',cursor:'pointer',
+    fontFamily:'Space Mono',fontWeight:700,
+    background:active?(dir==='LONG'?`${GREEN}22`:`${RED}22`):'rgba(255,255,255,0.04)',
+    color:active?(dir==='LONG'?GREEN:RED):'#5a6478',
+  });
+
+  const Row = ({label, children}) => (
+    <div style={{marginBottom:8}}>
+      <div style={{...S.hdr,marginBottom:3}}>{label}</div>
+      {children}
+    </div>
+  );
+
+  return (
+    <div style={{position:'fixed',top:60,right:20,width:300,zIndex:1000,
+      background:'#0f1318',border:'1px solid rgba(255,255,255,0.1)',
+      borderRadius:10,boxShadow:'0 8px 32px rgba(0,0,0,0.6)',padding:'16px',
+      fontFamily:'Space Grotesk'}}>
+
+      {/* Header */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+        <div style={{fontSize:13,fontWeight:600,color:'#c8d0e0'}}>Position Sizing</div>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          {P && <span style={{fontSize:10,color:'#5a6478',fontFamily:'Space Mono'}}>${fmt(P,0)} USD</span>}
+          <button onClick={onClose} style={{background:'none',border:'none',color:'#5a6478',cursor:'pointer',fontSize:16,lineHeight:1}}>×</button>
+        </div>
+      </div>
+
+      {/* Direction */}
+      <div style={{display:'flex',gap:4,marginBottom:14}}>
+        <button style={dirBtn(dir==='LONG')}  onClick={()=>setDir('LONG')}>LONG</button>
+        <button style={dirBtn(dir==='SHORT')} onClick={()=>setDir('SHORT')}>SHORT</button>
+      </div>
+
+      {/* Solve mode */}
+      <div style={{marginBottom:14}}>
+        <div style={{...S.hdr,marginBottom:4}}>Solve for</div>
+        <div style={{display:'flex',gap:4}}>
+          <button style={modeBtn(mode==='qty')}  onClick={()=>setMode('qty')}>Quantity</button>
+          <button style={modeBtn(mode==='stop')} onClick={()=>setMode('stop')}>Stop</button>
+          <button style={modeBtn(mode==='risk')} onClick={()=>setMode('risk')}>Risk %</button>
+        </div>
+      </div>
+
+      {/* Fields in order: Qty, Entry, Target, Stop, Risk% */}
+      <Row label="Quantity">
+        {mode==='qty'
+          ? <div style={{...solvedSt,padding:'5px 8px',borderRadius:4,fontSize:12}}>{solvedQty!=null?solvedQty:'—'}</div>
+          : <input style={inSt} type="number" step="1" min="1" placeholder="e.g. 500"
+              value={qty} onChange={e=>setQty(e.target.value)}/>}
+      </Row>
+      <Row label="Entry Price">
+        <input style={inSt} type="number" step="any" placeholder="e.g. 148.50"
+          value={entry} onChange={e=>setEntry(e.target.value)}/>
+      </Row>
+      <Row label="Target Price (optional)">
+        <input style={inSt} type="number" step="any" placeholder="e.g. 155.00"
+          value={target} onChange={e=>setTarget(e.target.value)}/>
+      </Row>
+      <Row label="Stop Loss">
+        {mode==='stop'
+          ? <div style={{...solvedSt,padding:'5px 8px',borderRadius:4,fontSize:12}}>{solvedStop!=null?solvedStop:'—'}</div>
+          : <input style={inSt} type="number" step="any" placeholder="e.g. 144.00"
+              value={stop} onChange={e=>setStop(e.target.value)}/>}
+      </Row>
+      <Row label="Risk %">
+        {mode==='risk'
+          ? <div style={{...solvedSt,padding:'5px 8px',borderRadius:4,fontSize:12}}>{solvedRisk!=null?solvedRisk+'%':'—'}</div>
+          : <input style={inSt} type="number" step="any" placeholder="e.g. 0.5"
+              value={riskPct} onChange={e=>setRiskPct(e.target.value)}/>}
+      </Row>
+
+      {/* Results */}
+      {(riskAmt||notional) && (
+        <div style={{marginTop:12,paddingTop:12,borderTop:'1px solid rgba(255,255,255,0.06)',
+          display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+          {riskAmt!=null && <div>
+            <div style={S.hdr}>Risk Amount</div>
+            <div style={{fontFamily:'Space Mono',fontWeight:700,fontSize:13,color:RED}}>${fmt(riskAmt,0)}</div>
+          </div>}
+          {displayRisk!=null && <div>
+            <div style={S.hdr}>Risk %</div>
+            <div style={{fontFamily:'Space Mono',fontWeight:700,fontSize:13,color:RED}}>{displayRisk}%</div>
+          </div>}
+          {notional!=null && <div>
+            <div style={S.hdr}>Notional</div>
+            <div style={{fontFamily:'Space Mono',fontWeight:700,fontSize:13,color:'#c8d0e0'}}>${fmt(notional,0)}</div>
+          </div>}
+          {notionalPct!=null && <div>
+            <div style={S.hdr}>% of Portfolio</div>
+            <div style={{fontFamily:'Space Mono',fontWeight:700,fontSize:13,color:'#c8d0e0'}}>{notionalPct}%</div>
+          </div>}
+          {rr!=null && <div style={{gridColumn:'1/-1'}}>
+            <div style={S.hdr}>R / R</div>
+            <div style={{fontFamily:'Space Mono',fontWeight:700,fontSize:13,color:rr>=1?GREEN:'#c8d0e0'}}>{rr} : 1</div>
+          </div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── App root ──────────────────────────────────────────────────────────────────
 function App() {
   const [nav,          setNav]          = React.useState('dashboard');
   const [mounted,      setMounted]      = React.useState(()=>new Set(['dashboard','journal','analysis','calendar','data']));
   const [version,      setVersion]      = React.useState(0);
   const [selectedYear, setSelectedYear] = React.useState(new Date().getFullYear());
+  const [calcOpen,     setCalcOpen]     = React.useState(false);
   const NAV_ITEMS = [{id:'dashboard',label:'Dash'},{id:'journal',label:'Journal'},{id:'analysis',label:'Analysis'},{id:'calendar',label:'Calendar'},{id:'data',label:'Data'}];
+
+  React.useEffect(() => {
+    const onKey = e => { if (e.key === 'F1') { e.preventDefault(); setCalcOpen(o => !o); } };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const goNav = id => {
     setMounted(prev => { const n=new Set(prev); n.add(id); return n; });
@@ -2347,6 +2529,7 @@ function App() {
           </div>
         ))}
       </div>
+      {calcOpen && <CalcPanel onClose={()=>setCalcOpen(false)}/>}
       {/* Mobile bottom nav */}
       <div className="mobile-nav">
         {NAV_ITEMS.map(n=>(
