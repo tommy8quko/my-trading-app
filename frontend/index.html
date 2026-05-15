@@ -2472,29 +2472,31 @@ function CalcPanel({onClose}) {
       </Row>
 
       {/* Results */}
-      {(riskAmt||notional) && (
-        <div style={{marginTop:12,paddingTop:12,borderTop:'1px solid rgba(255,255,255,0.06)',
-          display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-          {riskAmt!=null && <div>
-            <div style={S.hdr}>Risk Amount</div>
-            <div style={{fontFamily:'Space Mono',fontWeight:700,fontSize:13,color:RED}}>${fmt(riskAmt,0)}</div>
-          </div>}
-          {displayRisk!=null && <div>
-            <div style={S.hdr}>Risk %</div>
-            <div style={{fontFamily:'Space Mono',fontWeight:700,fontSize:13,color:RED}}>{displayRisk}%</div>
-          </div>}
-          {notional!=null && <div>
-            <div style={S.hdr}>Notional</div>
-            <div style={{fontFamily:'Space Mono',fontWeight:700,fontSize:13,color:'#c8d0e0'}}>${fmt(notional,0)}</div>
-          </div>}
-          {notionalPct!=null && <div>
-            <div style={S.hdr}>% of Portfolio</div>
-            <div style={{fontFamily:'Space Mono',fontWeight:700,fontSize:13,color:'#c8d0e0'}}>{notionalPct}%</div>
-          </div>}
-          {rr!=null && <div style={{gridColumn:'1/-1'}}>
-            <div style={S.hdr}>R / R</div>
-            <div style={{fontFamily:'Space Mono',fontWeight:700,fontSize:13,color:rr>=1?GREEN:'#c8d0e0'}}>{rr} : 1</div>
-          </div>}
+      {(riskAmt!=null||notional!=null||rr!=null) && (
+        <div style={{marginTop:12,paddingTop:12,borderTop:'1px solid rgba(255,255,255,0.08)',display:'flex',flexDirection:'column',gap:6}}>
+          {/* Risk $ */}
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline'}}>
+            <span style={{fontSize:11,color:'#5a6478',fontFamily:'Space Grotesk'}}>Risk $</span>
+            <span style={{fontFamily:'Space Mono',fontWeight:700,fontSize:13,color:RED}}>
+              {riskAmt!=null ? `$${fmt(riskAmt,0)}` : '—'}
+              {displayRisk!=null && <span style={{fontSize:10,fontWeight:400,color:'#a0536a',marginLeft:6}}>({displayRisk}%)</span>}
+            </span>
+          </div>
+          {/* Notional */}
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline'}}>
+            <span style={{fontSize:11,color:'#5a6478',fontFamily:'Space Grotesk'}}>Notional</span>
+            <span style={{fontFamily:'Space Mono',fontWeight:700,fontSize:13,color:'#c8d0e0'}}>
+              {notional!=null ? `$${fmt(notional,0)}` : '—'}
+              {notionalPct!=null && <span style={{fontSize:10,fontWeight:400,color:'#5a6478',marginLeft:6}}>({notionalPct}%)</span>}
+            </span>
+          </div>
+          {/* R/R */}
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline'}}>
+            <span style={{fontSize:11,color:'#5a6478',fontFamily:'Space Grotesk'}}>R / R</span>
+            <span style={{fontFamily:'Space Mono',fontWeight:700,fontSize:13,color:rr!=null&&rr>=1?GREEN:'#c8d0e0'}}>
+              {rr!=null ? `${rr} : 1` : '—'}
+            </span>
+          </div>
         </div>
       )}
     </div>
