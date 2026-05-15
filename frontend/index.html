@@ -275,49 +275,38 @@ function SetupPerformancePanel({currency}) {
 
 // ── Panel C: Diverging P&L bar chart by symbol ────────────────────────────────
 function PanelC({trades}) {
-  const [hoveredIndex, setHoveredIndex] = React.useState(null);
+  const [hovered, setHovered] = React.useState(null);
   if (!trades||!trades.length) return <div style={{flex:1}}/>;
-  const recent=trades.slice(0,10);
-  const maxAbs=Math.max(...recent.map(t=>Math.abs(t.pnl)),1);
-  const sqrtMax=Math.sqrt(maxAbs);
+  const recent = trades.slice(0,10);
+  const maxAbs = Math.max(...recent.map(t=>Math.abs(t.pnl)), 1);
   return (
-    <div style={{flex:1,overflow:'hidden',padding:'10px 12px',display:'flex',flexDirection:'column',minHeight:0}}>
-      <div style={{...S.hdr,marginBottom:8}}>Recent 10 Trades</div>
-      <div style={{flex:1,overflowY:'auto',overflowX:'hidden'}}>
+    <div style={{flex:1,overflow:'hidden',padding:'14px 20px',display:'flex',flexDirection:'column',minHeight:0}}>
+      <div style={{fontSize:9.5,fontWeight:600,color:'#323d52',textTransform:'uppercase',letterSpacing:'0.1em',fontFamily:'Space Grotesk',marginBottom:10,flexShrink:0}}>Recent Trades</div>
+      <div style={{flex:1,overflowY:'auto',display:'flex',flexDirection:'column',gap:3}}>
         {recent.map((t,i)=>{
-          const barPct=(sqrtMax>0?Math.sqrt(Math.abs(t.pnl))/sqrtMax:0)*0.85, isPos=t.pnl>=0;
-          const isHovered=hoveredIndex===i;
-          const pnlLabel=(t.pnl>=0?'+':'')+fmt(t.pnl,0);
+          const win = t.pnl >= 0;
+          const barW = Math.abs(t.pnl) / maxAbs;
+          const pctVal = t.pct_return != null ? ((t.pct_return>=0?'+':'')+fmt(t.pct_return,1)+'%') : '—';
+          const pnlLabel = (t.pnl>=0?'+':'')+fmt(t.pnl,0);
+          const dateLabel = (t.exit_date||'').slice(5);
+          const isHov = hovered===i;
           return (
-            <div key={i} style={{display:'flex',alignItems:'center',marginBottom:5,gap:4}}>
-              <div style={{width:44,flexShrink:0,textAlign:'right',fontFamily:'Space Mono',fontSize:9,color:'#09CDDF',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.symbol}</div>
-              {/* outer: position:relative for tooltip anchor, no overflow clip */}
-              <div style={{flex:1,position:'relative'}}
-                onMouseEnter={()=>setHoveredIndex(i)} onMouseLeave={()=>setHoveredIndex(null)}>
-                {/* inner: overflow:hidden clips bars only */}
-                <div style={{display:'flex',alignItems:'center',height:12,overflow:'hidden'}}>
-                  <div style={{flex:1,display:'flex',justifyContent:'flex-end',height:'100%'}}>
-                    {!isPos&&<div style={{height:'100%',width:`${barPct*100}%`,background:`${RED}99`,borderRadius:'3px 0 0 3px'}}/>}
-                  </div>
-                  <div style={{width:1,height:16,background:'rgba(255,255,255,0.1)',flexShrink:0}}/>
-                  <div style={{flex:1,height:'100%'}}>
-                    {isPos&&<div style={{height:'100%',width:`${barPct*100}%`,background:`${GREEN}99`,borderRadius:'0 3px 3px 0'}}/>}
-                  </div>
-                </div>
-                {/* tooltip sibling — outside overflow:hidden so it renders freely */}
-                {isHovered && (
-                  <div style={{
-                    position:'absolute',top:'50%',
-                    left: isPos ? `calc(50% + ${barPct*50}%)` : `calc(${50 - barPct*50}% - 4px)`,
-                    transform: isPos ? 'translateY(-50%)' : 'translate(-100%,-50%)',
-                    background:'#141a24',border:'1px solid rgba(255,255,255,0.1)',
-                    borderRadius:4,padding:'4px 10px',
-                    fontFamily:'Space Mono',fontSize:11,fontWeight:700,
-                    color:isPos?GREEN:RED,
-                    pointerEvents:'none',whiteSpace:'nowrap',zIndex:10,
-                  }}>{pnlLabel}</div>
-                )}
+            <div key={i} style={{
+              display:'flex',alignItems:'center',gap:9,
+              padding:'5px 10px',borderRadius:5,flexShrink:0,height:30,
+              background:'#15171f',
+              border:`1px solid ${isHov?'rgba(255,255,255,0.10)':'rgba(255,255,255,0.045)'}`,
+              transition:'border-color 0.12s',
+            }}
+            onMouseEnter={()=>setHovered(i)} onMouseLeave={()=>setHovered(null)}>
+              <div style={{width:5,height:5,borderRadius:'50%',flexShrink:0,background:win?GREEN:RED}}/>
+              <span style={{fontFamily:'Space Mono',fontSize:11,fontWeight:700,color:'#7aabff',width:50,flexShrink:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.symbol}</span>
+              <span style={{fontFamily:'Space Grotesk',fontSize:9,color:'#323d52',width:32,flexShrink:0}}>{dateLabel}</span>
+              <div style={{flex:1,height:4,background:'rgba(255,255,255,0.05)',borderRadius:2,overflow:'hidden'}}>
+                <div style={{width:`${barW*100}%`,height:'100%',background:win?GREEN:RED,opacity:0.75,borderRadius:2}}/>
               </div>
+              <span style={{fontFamily:'Space Grotesk',fontSize:9,color:win?GREEN:RED,width:36,textAlign:'right',flexShrink:0}}>{pctVal}</span>
+              <span style={{fontFamily:'Space Mono',fontSize:11,fontWeight:700,color:win?GREEN:RED,width:68,textAlign:'right',flexShrink:0}}>{pnlLabel}</span>
             </div>
           );
         })}
