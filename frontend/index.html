@@ -2084,9 +2084,14 @@ function App() {
   );
 }
 
-const _boot = document.getElementById('boot');
-if (_boot) _boot.style.display = 'none';
-ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+try {
+  const _boot = document.getElementById('boot');
+  if (_boot) _boot.style.display = 'none';
+  ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+} catch(e) {
+  const b = document.getElementById('boot');
+  if (b) { b.style.display='flex'; b.style.flexDirection='column'; b.style.gap='12px'; b.innerHTML = '<div style="color:#CE314B;font-size:14px">Startup error</div><div style="max-width:500px;text-align:center;line-height:1.6;font-size:11px">'+String(e)+'</div>'; }
+}
 </script>
 </body>
 </html>
