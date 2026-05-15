@@ -27,12 +27,32 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
-# ── Live price helper ─────────────────────────────────────────────────────────
+# ── Caches ───────────────────────────────────────────────────────────────────
 
 import time as _time
+
+# Price cache (5 min TTL)
 _price_cache: dict[str, float | None] = {}
 _price_cache_ts: float = 0.0
-_PRICE_TTL = 300  # seconds (5 minutes)
+_PRICE_TTL = 300
+
+# Portfolio cache (15 s TTL) — avoids rebuilding from DB on every request
+_portfolio_cache: tuple | None = None
+_portfolio_cache_ts: float = 0.0
+_PORTFOLIO_TTL = 15
+
+def _get_portfolio():
+    global _portfolio_cache, _portfolio_cache_ts
+    now = _time.time()
+    if _portfolio_cache is not None and now - _portfolio_cache_ts < _PORTFOLIO_TTL:
+        return _portfolio_cache
+    _portfolio_cache = build_portfolio()
+    _portfolio_cache_ts = now
+    return _portfolio_cache
+
+def _invalidate_portfolio():
+    global _portfolio_cache
+    _portfolio_cache = None
 
 def _symbol_to_yf_ticker(symbol: str, exchange: str) -> str:
     """Convert a stored symbol to the yfinance ticker format."""
@@ -85,49 +105,54 @@ def _fetch_prices(positions: list[tuple[str, str]]) -> dict[str, float | None]:
 
 @app.get("/api/portfolio")
 def get_portfolio():
-    open_pos, closed = build_portfolio()
+    open_pos, closed = _get_portfolio()
 
     prices = _fetch_prices([(p.symbol, p.exchange) for p in open_pos])
 
     def _pos_pnl(p, price):
         if price is None:
             return None, None
-        if p.direction == "LONG":
-            pnl = (price - p.avg_entry_price) * p.total_quantity
-        else:
-            pnl = (p.avg_entry_price - price) * p.total_quantity
-        cost = p.avg_entry_price * p.total_quantity
-        pct  = (pnl / cost * 100) if cost else None
+        qty = p.total_quantity
+        avg = p.avg_entry_price
+        pnl = (price - avg) * qty if p.direction == "LONG" else (avg - price) * qty
+        cost = avg * qty
+        pct = (pnl / cost * 100) if cost else None
         return round(pnl, 2), round(pct, 2) if pct is not None else None
 
+    pos_rows = []
+    for p in open_pos:
+        price = prices.get(p.symbol)
+        pnl, pct = _pos_pnl(p, price)
+        qty = p.total_quantity
+        avg = p.avg_entry_price
+        pos_rows.append({
+            "symbol":         p.symbol,
+            "exchange":       p.exchange,
+            "currency":       p.currency,
+            "direction":      p.direction,
+            "quantity":       qty,
+            "avg_entry":      round(avg, 4),
+            "notional":       round(avg * qty, 2),
+            "stop_loss":      p.initial_stop_loss,
+            "entry_date":     str(p.earliest_entry_date) if p.earliest_entry_date else None,
+            "current_price":  round(price, 4) if price else None,
+            "unrealized_pnl": pnl,
+            "pct_return":     pct,
+            "lots": [
+                {
+                    "order_id":    l.order_id,
+                    "date":        str(l.order_date),
+                    "action":      l.action,
+                    "quantity":    l.quantity,
+                    "entry_price": l.entry_price,
+                    "stop_loss":   l.stop_loss_at_entry,
+                }
+                for l in p.lots
+            ],
+        })
+
     return {
-        "open_positions": [
-            {
-                "symbol":        p.symbol,
-                "exchange":      p.exchange,
-                "currency":      p.currency,
-                "direction":     p.direction,
-                "quantity":      p.total_quantity,
-                "avg_entry":     round(p.avg_entry_price, 4),
-                "stop_loss":     p.initial_stop_loss,
-                "entry_date":    str(p.earliest_entry_date) if p.earliest_entry_date else None,
-                "current_price": round(prices.get(p.symbol), 4) if prices.get(p.symbol) else None,
-                "unrealized_pnl": _pos_pnl(p, prices.get(p.symbol))[0],
-                "pct_return":     _pos_pnl(p, prices.get(p.symbol))[1],
-                "lots": [
-                    {
-                        "order_id":   l.order_id,
-                        "date":       str(l.order_date),
-                        "action":     l.action,
-                        "quantity":   l.quantity,
-                        "entry_price":l.entry_price,
-                        "stop_loss":  l.stop_loss_at_entry,
-                    }
-                    for l in p.lots
-                ],
-            }
-            for p in open_pos
-        ],
+        "open_positions": pos_rows,
         "closed_trades": [
             {
                 "symbol":       t.symbol,
@@ -158,7 +183,7 @@ def get_portfolio():
 @app.get("/api/metrics")
 def get_metrics(currency: str = "USD"):
     import copy
-    open_pos, closed = build_portfolio()
+    open_pos, closed = _get_portfolio()
     pending = len(fetch_pending(limit=200))
     src_currencies = sorted({t.currency for t in closed}) if closed else ["USD"]
     currencies_out = (["ALL"] if len(src_currencies) > 1 else []) + src_currencies
@@ -211,7 +236,7 @@ def get_metrics(currency: str = "USD"):
 
 @app.get("/api/stats")
 def get_stats(currency: str = "USD"):
-    _, closed = build_portfolio()
+    _, closed = _get_portfolio()
     filtered = [t for t in closed if t.currency == currency and t.symbol not in EXCLUDED_SYMBOLS]
     return {
         "by_direction": breakdown_by_direction(filtered),
@@ -257,10 +282,11 @@ async def approve(queue_id: str, request: Request):
         notes = body.get("notes", "")
         sl = body.get("stop_loss")
         stop_loss = float(sl) if sl else None
-        _, closed_before = build_portfolio()
+        _, closed_before = _get_portfolio()
         before_keys = {(t.symbol, str(t.entry_date), str(t.exit_date)) for t in closed_before}
         approve_item(queue_id, notes=notes, stop_loss=stop_loss)
-        _, closed_after = build_portfolio()
+        _invalidate_portfolio()
+        _, closed_after = _get_portfolio()
         new_closed = [
             t for t in closed_after
             if (t.symbol, str(t.entry_date), str(t.exit_date)) not in before_keys
@@ -282,6 +308,7 @@ async def approve(queue_id: str, request: Request):
 def reject(queue_id: str, notes: str = ""):
     try:
         reject_item(queue_id, notes=notes)
+        _invalidate_portfolio()
         return {"ok": True}
     except Exception as e:
         raise HTTPException(400, str(e))
@@ -496,7 +523,7 @@ class CoachRequest(BaseModel):
 
 @app.post("/api/coach/generate")
 def generate_coach(req: CoachRequest):
-    _, closed_all = build_portfolio()
+    _, closed_all = _get_portfolio()
     closed = [t for t in closed_all if t.symbol not in EXCLUDED_SYMBOLS]
     m = summary_dict(closed) if closed else {}
     if not closed:
@@ -623,7 +650,7 @@ def get_spy(from_date: str = None):
 @app.get("/api/stats/setup_tags")
 def get_setup_tag_stats(currency: str = "USD"):
     from collections import defaultdict
-    _, closed = build_portfolio()
+    _, closed = _get_portfolio()
     filtered = [t for t in closed if t.currency == currency and t.symbol not in EXCLUDED_SYMBOLS]
     trade_lookup = {(t.symbol, str(t.entry_date)): t for t in filtered}
 
@@ -664,7 +691,7 @@ def get_setup_tag_stats(currency: str = "USD"):
 @app.get("/api/stats/market_condition")
 def get_market_condition_stats(currency: str = "USD"):
     from collections import defaultdict
-    _, closed = build_portfolio()
+    _, closed = _get_portfolio()
     filtered = [t for t in closed if t.currency == currency and t.symbol not in EXCLUDED_SYMBOLS]
     trade_lookup = {(t.symbol, str(t.entry_date)): t for t in filtered}
     reviews = get_supabase().table("trade_reviews").select("symbol,entry_date,market_condition").execute().data
@@ -692,7 +719,7 @@ def get_market_condition_stats(currency: str = "USD"):
 
 @app.get("/api/stats/maemfe_analysis")
 def get_maemfe_analysis(currency: str = "USD"):
-    _, closed = build_portfolio()
+    _, closed = _get_portfolio()
     filtered = [t for t in closed if t.currency == currency and t.symbol not in EXCLUDED_SYMBOLS]
     trade_lookup = {(t.symbol, str(t.entry_date)): t for t in filtered}
 
@@ -736,7 +763,7 @@ def get_maemfe_analysis(currency: str = "USD"):
 def _build_weekly_prompt() -> str | None:
     """Build the weekly review prompt. Returns None if no trades this week."""
     from datetime import timedelta
-    _, closed_all = build_portfolio()
+    _, closed_all = _get_portfolio()
     closed = [t for t in closed_all if t.symbol not in EXCLUDED_SYMBOLS]
 
     today = date.today()
