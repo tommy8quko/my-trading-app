@@ -2324,6 +2324,8 @@ function CalcPanel({onClose}) {
   const [riskPct,setRiskPct]= React.useState('');
   const [mode,   setMode]   = React.useState('risk');   // 'risk' | 'qty' | 'stop'
   const [portfolio, setPortfolio] = React.useState(null);
+  const [pos, setPos] = React.useState({top:60, right:20, left:null});
+  const dragRef = React.useRef(null);
 
   React.useEffect(()=>{
     api('/portfolio').then(d=>{
@@ -2337,6 +2339,23 @@ function CalcPanel({onClose}) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  const onDragStart = e => {
+    e.preventDefault();
+    const startX = e.clientX, startY = e.clientY;
+    const el = dragRef.current;
+    const rect = el.getBoundingClientRect();
+    const offX = startX - rect.left, offY = startY - rect.top;
+    const onMove = ev => {
+      setPos({top: ev.clientY - offY, left: ev.clientX - offX, right: null});
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
 
   const round2 = v => Math.round(v * 100) / 100;
   const E = parseFloat(entry), S = parseFloat(stop);
@@ -2393,14 +2412,20 @@ function CalcPanel({onClose}) {
     </div>
   );
 
-  return (
-    <div style={{position:'fixed',top:60,right:20,width:300,zIndex:1000,
-      background:'#0f1318',border:'1px solid rgba(255,255,255,0.1)',
-      borderRadius:10,boxShadow:'0 8px 32px rgba(0,0,0,0.6)',padding:'16px',
-      fontFamily:'Space Grotesk'}}>
+  const panelStyle = {position:'fixed',top:pos.top,width:300,zIndex:1000,
+    background:'#0f1318',border:'1px solid rgba(255,255,255,0.1)',
+    borderRadius:10,boxShadow:'0 8px 32px rgba(0,0,0,0.6)',padding:'16px',
+    fontFamily:'Space Grotesk',
+    ...(pos.left!=null ? {left:pos.left} : {right:20}),
+  };
 
-      {/* Header */}
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+  return (
+    <div ref={dragRef} style={panelStyle}>
+
+      {/* Header — drag handle */}
+      <div onMouseDown={onDragStart}
+        style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14,
+          cursor:'grab',userSelect:'none'}}>
         <div style={{fontSize:13,fontWeight:600,color:'#c8d0e0'}}>Position Sizing</div>
         <div style={{display:'flex',alignItems:'center',gap:8}}>
           {P && <span style={{fontSize:10,color:'#5a6478',fontFamily:'Space Mono'}}>${fmt(P,0)} USD</span>}
