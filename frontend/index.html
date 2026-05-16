@@ -890,10 +890,12 @@ function Dashboard({version, year}) {
                 const totalUsd = (totals.USD||0) + (totals.HKD||0) / 7.8;
                 let openRisk = null;
                 for (const p of (data?.open_positions||[])) {
-                  if (p.stop_loss == null) continue;
-                  let r = Math.abs(p.avg_entry - p.stop_loss) * p.quantity;
-                  if (p.currency === 'HKD') r /= 7.8;
-                  openRisk = (openRisk||0) + r;
+                  for (const lot of (p.lots||[])) {
+                    if (lot.stop_loss == null) continue;
+                    let r = Math.abs(lot.entry_price - lot.stop_loss) * lot.quantity;
+                    if (p.currency === 'HKD') r /= 7.8;
+                    openRisk = (openRisk||0) + r;
+                  }
                 }
                 const openRiskPct = openRisk!=null && totalUsd ? Math.round(openRisk/totalUsd*1000)/10 : null;
                 const cells = [
@@ -969,10 +971,10 @@ function PositionRow({p, idx=0, onRefresh}) {
   const [form,         setForm]         = React.useState({});
   const [savingRev,    setSavingRev]    = React.useState(false);
   const [saveMsg,      setSaveMsg]      = React.useState('');
-  const [curStop,      setCurStop]      = React.useState(p.stop_loss != null ? String(p.stop_loss) : '');
-  const [stopIsInit,   setStopIsInit]   = React.useState(p.stop_is_initial !== false);
-  const [savingStop,   setSavingStop]   = React.useState(false);
-  const [stopErr,      setStopErr]      = React.useState('');
+  const [curStops,     setCurStops]     = React.useState({});  // {order_id: string}
+  const [stopIsInit,   setStopIsInit]   = React.useState({});  // {order_id: bool}
+  const [savingStop,   setSavingStop]   = React.useState({});
+  const [stopErr,      setStopErr]      = React.useState({});
 
   const entryDate = p.entry_date || (p.lots?.[0]?.date ?? '');
 
@@ -996,17 +998,18 @@ function PositionRow({p, idx=0, onRefresh}) {
     setSaving(s=>({...s,[lotOrderId]:false}));
   };
 
-  const saveCurrentStop = async () => {
-    setSavingStop(true); setStopErr('');
+  const saveCurrentStop = async (orderId) => {
+    setSavingStop(s=>({...s,[orderId]:true})); setStopErr(e=>({...e,[orderId]:''}));
     try {
-      const sl = parseFloat(curStop);
-      await api(`/positions/${encodeURIComponent(p.symbol)}/current_stop`, {
+      const sl = parseFloat(curStops[orderId] ?? '');
+      const isInit = stopIsInit[orderId] !== false;
+      await api(`/orders/${orderId}/current_stop`, {
         method:'PATCH', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({current_stop: sl > 0 ? sl : null, is_initial: stopIsInit}),
+        body: JSON.stringify({current_stop: sl > 0 ? sl : null, is_initial: isInit}),
       });
       await onRefresh();
-    } catch(e) { setStopErr(e.message || String(e)); }
-    setSavingStop(false);
+    } catch(e) { setStopErr(er=>({...er,[orderId]:e.message||String(e)})); }
+    setSavingStop(s=>({...s,[orderId]:false}));
   };
 
   const [deleting, setDeleting] = React.useState(false);
@@ -1076,43 +1079,44 @@ function PositionRow({p, idx=0, onRefresh}) {
       </tr>
 
       {open && <>
-        {/* Lot rows (read-only) */}
-        {(p.lots||[]).map(lot=>(
-          <tr key={lot.order_id} style={{background:'rgba(255,255,255,0.02)'}}>
-            <td style={{paddingLeft:20,color:'#5a6478',fontSize:10,fontFamily:'Space Mono'}}>{lot.date}</td>
-            <td style={{color:'#5a6478',fontSize:10,textTransform:'uppercase'}}>{lot.action}</td>
-            <td/>
-            <td style={{textAlign:'right',color:'#5a6478',fontSize:11,fontFamily:'Space Mono'}}>{fmt(lot.quantity)}</td>
-            <td style={{textAlign:'right',color:'#5a6478',fontSize:11,fontFamily:'Space Mono'}}>{fmt(lot.entry_price,4)}</td>
-            <td colSpan={3}/>
-          </tr>
-        ))}
-
-        {/* Current stop editor */}
-        <tr style={{background:'rgba(255,255,255,0.02)'}}>
-          <td colSpan={9} style={{padding:'8px 20px',borderTop:'1px solid rgba(255,255,255,0.04)'}}>
-            <div style={{display:'flex',alignItems:'center',gap:8}} onClick={e=>e.stopPropagation()}>
-              <span style={{fontSize:10,color:'#5a6478',fontFamily:'Space Grotesk',flexShrink:0}}>Current Stop</span>
-              <input type="number" step="any" placeholder="e.g. 144.00"
-                value={curStop} onChange={e=>setCurStop(e.target.value)}
-                style={{...inputSt,width:100}}/>
-              {/* Initial / Moved toggle */}
-              <div style={{display:'flex',borderRadius:4,overflow:'hidden',border:'1px solid rgba(255,255,255,0.1)',flexShrink:0}}>
-                <button onClick={()=>setStopIsInit(true)} style={{padding:'3px 8px',border:'none',cursor:'pointer',fontSize:10,fontFamily:'Space Mono',
-                  background:stopIsInit?'rgba(99,179,237,0.15)':'transparent',
-                  color:stopIsInit?ACCENT:'#5a6478'}}>Initial</button>
-                <button onClick={()=>setStopIsInit(false)} style={{padding:'3px 8px',border:'none',cursor:'pointer',fontSize:10,fontFamily:'Space Mono',
-                  background:!stopIsInit?'rgba(246,173,85,0.15)':'transparent',
-                  color:!stopIsInit?'#f6ad55':'#5a6478'}}>Moved</button>
-              </div>
-              <button onClick={saveCurrentStop} disabled={savingStop}
-                style={{...S.btn(true),padding:'3px 8px',fontSize:10,flexShrink:0}}>
-                {savingStop?'…':'Save'}
-              </button>
-              {stopErr && <span style={{fontSize:10,color:RED}}>{stopErr}</span>}
-            </div>
-          </td>
-        </tr>
+        {/* Lot rows with per-lot current stop editor */}
+        {(p.lots||[]).map(lot=>{
+          const lotStop = curStops[lot.order_id] ?? (lot.stop_loss != null ? String(lot.stop_loss) : '');
+          const isInit  = stopIsInit[lot.order_id] !== false;
+          return (
+            <tr key={lot.order_id} style={{background:'rgba(255,255,255,0.02)'}}>
+              <td style={{paddingLeft:20,color:'#5a6478',fontSize:10,fontFamily:'Space Mono'}}>{lot.date}</td>
+              <td style={{color:'#5a6478',fontSize:10,textTransform:'uppercase'}}>{lot.action}</td>
+              <td/>
+              <td style={{textAlign:'right',color:'#5a6478',fontSize:11,fontFamily:'Space Mono'}}>{fmt(lot.quantity)}</td>
+              <td style={{textAlign:'right',color:'#5a6478',fontSize:11,fontFamily:'Space Mono'}}>{fmt(lot.entry_price,4)}</td>
+              <td style={{textAlign:'right'}} onClick={e=>e.stopPropagation()}>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:4}}>
+                  <input type="number" step="any" placeholder="current stop"
+                    value={lotStop}
+                    onChange={e=>setCurStops(s=>({...s,[lot.order_id]:e.target.value}))}
+                    style={inputSt}/>
+                  <div style={{display:'flex',borderRadius:3,overflow:'hidden',border:'1px solid rgba(255,255,255,0.08)'}}>
+                    <button onClick={()=>setStopIsInit(s=>({...s,[lot.order_id]:true}))}
+                      style={{padding:'2px 5px',border:'none',cursor:'pointer',fontSize:9,fontFamily:'Space Mono',
+                        background:isInit?'rgba(99,179,237,0.15)':'transparent',
+                        color:isInit?ACCENT:'#5a6478'}}>I</button>
+                    <button onClick={()=>setStopIsInit(s=>({...s,[lot.order_id]:false}))}
+                      style={{padding:'2px 5px',border:'none',cursor:'pointer',fontSize:9,fontFamily:'Space Mono',
+                        background:!isInit?'rgba(246,173,85,0.15)':'transparent',
+                        color:!isInit?'#f6ad55':'#5a6478'}}>M</button>
+                  </div>
+                  <button onClick={()=>saveCurrentStop(lot.order_id)} disabled={savingStop[lot.order_id]}
+                    style={{...S.btn(true),padding:'2px 7px',fontSize:10}}>
+                    {savingStop[lot.order_id]?'…':'Save'}
+                  </button>
+                  {stopErr[lot.order_id] && <span style={{fontSize:10,color:RED}}>{stopErr[lot.order_id]}</span>}
+                </div>
+              </td>
+              <td colSpan={2}/>
+            </tr>
+          );
+        })}
 
         {/* Trade review form */}
         <tr style={{background:'rgba(255,255,255,0.01)'}}>

@@ -178,11 +178,11 @@ def get_portfolio(year: int = 0):
     open_keys = {(p.symbol, str(p.earliest_entry_date)) for p in open_pos if p.earliest_entry_date}
     review_map = {k: v for k, v in all_review_map.items() if k in open_keys}
 
-    # Fetch current stops for open positions
-    open_symbols = [p.symbol for p in open_pos]
+    # Fetch current stops per lot (order_id)
+    all_order_ids = [l.order_id for p in open_pos for l in p.lots]
     raw_stops = get_supabase().table("position_stops") \
-        .select("symbol,current_stop,is_initial").in_("symbol", open_symbols).execute().data or [] if open_symbols else []
-    stops_map = {r["symbol"]: r for r in raw_stops}
+        .select("order_id,current_stop,is_initial").in_("order_id", all_order_ids).execute().data or [] if all_order_ids else []
+    stops_map = {r["order_id"]: r for r in raw_stops}
 
     pos_rows = []
     for p in open_pos:
@@ -194,38 +194,45 @@ def get_portfolio(year: int = 0):
         notional_usd = round(notional / _FX_HKD_USD if p.currency == "HKD" else notional, 2)
         notional_pct = round(notional_usd / total_usd * 100, 2) if total_usd else None
         rev = review_map.get((p.symbol, str(p.earliest_entry_date)), {})
-        stop_row = stops_map.get(p.symbol)
-        current_stop = stop_row["current_stop"] if stop_row else p.initial_stop_loss
-        stop_is_initial = stop_row["is_initial"] if stop_row else True
+
+        lots_out = []
+        for l in p.lots:
+            sr = stops_map.get(l.order_id)
+            lot_current_stop = sr["current_stop"] if sr else l.stop_loss_at_entry
+            lot_stop_is_initial = sr["is_initial"] if sr else True
+            lots_out.append({
+                "order_id":      l.order_id,
+                "date":          str(l.order_date),
+                "action":        l.action,
+                "quantity":      l.quantity,
+                "entry_price":   l.entry_price,
+                "stop_loss":     lot_current_stop,
+                "stop_is_initial": lot_stop_is_initial,
+            })
+
+        # Position-level stop: first lot with a current stop set, else initial_stop_loss
+        pos_stop = next((lot["stop_loss"] for lot in lots_out if lot["stop_loss"] is not None), None)
+        pos_stop_is_initial = all(lot["stop_is_initial"] for lot in lots_out)
+
         pos_rows.append({
-            "symbol":         p.symbol,
-            "exchange":       p.exchange,
-            "currency":       p.currency,
-            "direction":      p.direction,
-            "quantity":       qty,
-            "avg_entry":      round(avg, 4),
-            "notional":       notional,
-            "notional_usd":   notional_usd,
-            "notional_pct":   notional_pct,
-            "stop_loss":      current_stop,
-            "stop_is_initial": stop_is_initial,
-            "setup_tag":      rev.get("setup_tag"),
+            "symbol":          p.symbol,
+            "exchange":        p.exchange,
+            "currency":        p.currency,
+            "direction":       p.direction,
+            "quantity":        qty,
+            "avg_entry":       round(avg, 4),
+            "notional":        notional,
+            "notional_usd":    notional_usd,
+            "notional_pct":    notional_pct,
+            "stop_loss":       pos_stop,
+            "stop_is_initial": pos_stop_is_initial,
+            "setup_tag":       rev.get("setup_tag"),
             "market_condition": rev.get("market_condition"),
-            "entry_date":     str(p.earliest_entry_date) if p.earliest_entry_date else None,
-            "current_price":  round(price, 4) if price else None,
-            "unrealized_pnl": pnl,
-            "pct_return":     pct,
-            "lots": [
-                {
-                    "order_id":    l.order_id,
-                    "date":        str(l.order_date),
-                    "action":      l.action,
-                    "quantity":    l.quantity,
-                    "entry_price": l.entry_price,
-                    "stop_loss":   l.stop_loss_at_entry,
-                }
-                for l in p.lots
-            ],
+            "entry_date":      str(p.earliest_entry_date) if p.earliest_entry_date else None,
+            "current_price":   round(price, 4) if price else None,
+            "unrealized_pnl":  pnl,
+            "pct_return":      pct,
+            "lots":            lots_out,
         })
 
     return {
@@ -488,17 +495,17 @@ class CurrentStopUpdate(BaseModel):
     current_stop: float | None = None
     is_initial: bool = True
 
-@app.patch("/api/positions/{symbol}/current_stop")
-def update_position_current_stop(symbol: str, body: CurrentStopUpdate):
+@app.patch("/api/orders/{order_id}/current_stop")
+def update_order_current_stop(order_id: str, body: CurrentStopUpdate):
     db = get_supabase()
     if body.current_stop is None or body.current_stop <= 0:
-        db.table("position_stops").delete().eq("symbol", symbol).execute()
+        db.table("position_stops").delete().eq("order_id", order_id).execute()
     else:
         db.table("position_stops").upsert({
-            "symbol": symbol,
+            "order_id": order_id,
             "current_stop": body.current_stop,
             "is_initial": body.is_initial,
-        }, on_conflict="symbol").execute()
+        }, on_conflict="order_id").execute()
     _invalidate_portfolio()
     return {"ok": True}
 
