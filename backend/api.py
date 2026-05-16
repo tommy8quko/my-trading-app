@@ -178,10 +178,13 @@ def get_portfolio(year: int = 0):
     open_keys = {(p.symbol, str(p.earliest_entry_date)) for p in open_pos if p.earliest_entry_date}
     review_map = {k: v for k, v in all_review_map.items() if k in open_keys}
 
-    # Fetch current stops per lot (order_id)
+    # Fetch current stops per lot (order_id) — graceful if table doesn't exist yet
     all_order_ids = [l.order_id for p in open_pos for l in p.lots]
-    raw_stops = get_supabase().table("position_stops") \
-        .select("order_id,current_stop,is_initial").in_("order_id", all_order_ids).execute().data or [] if all_order_ids else []
+    try:
+        raw_stops = get_supabase().table("position_stops") \
+            .select("order_id,current_stop,is_initial").in_("order_id", all_order_ids).execute().data or [] if all_order_ids else []
+    except Exception:
+        raw_stops = []
     stops_map = {r["order_id"]: r for r in raw_stops}
 
     pos_rows = []
