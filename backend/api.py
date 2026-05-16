@@ -502,16 +502,15 @@ class CurrentStopUpdate(BaseModel):
 def update_order_current_stop(order_id: str, body: CurrentStopUpdate):
     db = get_supabase()
     try:
-        if body.current_stop is None or body.current_stop <= 0:
-            db.table("position_stops").delete().eq("order_id", order_id).execute()
-        else:
-            db.table("position_stops").upsert({
+        db.table("position_stops").delete().eq("order_id", order_id).execute()
+        if body.current_stop is not None and body.current_stop > 0:
+            db.table("position_stops").insert({
                 "order_id": order_id,
                 "current_stop": body.current_stop,
                 "is_initial": body.is_initial,
-            }, on_conflict="order_id").execute()
+            }).execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"position_stops table missing — run migration 003. ({e})")
+        raise HTTPException(status_code=500, detail=f"position_stops error: {e}")
     _invalidate_portfolio()
     return {"ok": True}
 

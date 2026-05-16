@@ -975,6 +975,7 @@ function PositionRow({p, idx=0, onRefresh}) {
   const [stopIsInit,   setStopIsInit]   = React.useState({});  // {order_id: bool}
   const [savingStop,   setSavingStop]   = React.useState({});
   const [stopErr,      setStopErr]      = React.useState({});
+  const stopInputRefs = React.useRef({});
 
   const entryDate = p.entry_date || (p.lots?.[0]?.date ?? '');
 
@@ -1080,9 +1081,18 @@ function PositionRow({p, idx=0, onRefresh}) {
 
       {open && <>
         {/* Lot rows with per-lot current stop editor */}
-        {(p.lots||[]).map(lot=>{
+        {(p.lots||[]).map((lot, lotIdx)=>{
+          const lotIds  = (p.lots||[]).map(l=>l.order_id);
           const lotStop = curStops[lot.order_id] ?? (lot.stop_loss != null ? String(lot.stop_loss) : '');
           const isInit  = stopIsInit[lot.order_id] !== false;
+          const onStopKey = e => {
+            if (e.key === 'Enter') { e.preventDefault(); saveCurrentStop(lot.order_id); }
+            if (e.key === 'Tab') {
+              e.preventDefault();
+              const nextId = lotIds[lotIdx + 1];
+              if (nextId && stopInputRefs.current[nextId]) stopInputRefs.current[nextId].focus();
+            }
+          };
           return (
             <tr key={lot.order_id} style={{background:'rgba(255,255,255,0.02)'}}>
               <td style={{paddingLeft:20,color:'#5a6478',fontSize:10,fontFamily:'Space Mono'}}>{lot.date}</td>
@@ -1093,8 +1103,10 @@ function PositionRow({p, idx=0, onRefresh}) {
               <td style={{textAlign:'right'}} onClick={e=>e.stopPropagation()}>
                 <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:4}}>
                   <input type="number" step="any" placeholder="current stop"
+                    ref={el => stopInputRefs.current[lot.order_id] = el}
                     value={lotStop}
                     onChange={e=>setCurStops(s=>({...s,[lot.order_id]:e.target.value}))}
+                    onKeyDown={onStopKey}
                     style={inputSt}/>
                   <div style={{display:'flex',borderRadius:3,overflow:'hidden',border:'1px solid rgba(255,255,255,0.08)'}}>
                     <button onClick={()=>setStopIsInit(s=>({...s,[lot.order_id]:true}))}
