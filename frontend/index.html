@@ -2369,7 +2369,6 @@ function CalcPanel({onClose}) {
   const [stop,   setStop]   = React.useState('');
   const [riskPct,setRiskPct]= React.useState('');
   const [portfolio,   setPortfolio]   = React.useState(null);
-  const [openRisk,    setOpenRisk]    = React.useState(null);
   const [pos, setPos] = React.useState({top:60, right:20, left:null});
   const dragRef = React.useRef(null);
 
@@ -2378,17 +2377,6 @@ function CalcPanel({onClose}) {
       const t = d.account_totals || {};
       const totalUsd = (t.USD||0) + (t.HKD||0) / 7.8;
       setPortfolio(round2(totalUsd));
-      // Sum open risk: |avg_entry - current_stop| × qty, converted to USD
-      const positions = d.open_positions || [];
-      let risk = 0;
-      for (const p of positions) {
-        if (p.stop_loss == null) continue;
-        const perShare = Math.abs(p.avg_entry - p.stop_loss);
-        let riskUsd = perShare * p.quantity;
-        if (p.currency === 'HKD') riskUsd /= 7.8;
-        risk += riskUsd;
-      }
-      setOpenRisk(positions.some(p=>p.stop_loss!=null) ? round2(risk) : null);
     }).catch(()=>{});
   }, []);
 
@@ -2566,27 +2554,6 @@ function CalcPanel({onClose}) {
         </div>
       )}
 
-      {/* Worst-case open risk */}
-      {openRisk!=null && P && (
-        <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid rgba(255,255,255,0.06)'}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline'}}>
-            <span style={{fontSize:11,color:'#5a6478',fontFamily:'Space Grotesk'}}>All stops hit</span>
-            <span style={{fontFamily:'Space Mono',fontWeight:700,fontSize:13,color:RED}}>
-              ${fmt(openRisk,0)}
-              <span style={{fontSize:10,fontWeight:400,color:'#a0536a',marginLeft:6}}>({round2(openRisk/P*100)}%)</span>
-            </span>
-          </div>
-          {riskAmt!=null && (
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginTop:4}}>
-              <span style={{fontSize:11,color:'#5a6478',fontFamily:'Space Grotesk'}}>+ this trade</span>
-              <span style={{fontFamily:'Space Mono',fontWeight:700,fontSize:13,color:RED}}>
-                ${fmt(openRisk+riskAmt,0)}
-                <span style={{fontSize:10,fontWeight:400,color:'#a0536a',marginLeft:6}}>({round2((openRisk+riskAmt)/P*100)}%)</span>
-              </span>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
