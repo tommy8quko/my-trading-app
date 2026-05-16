@@ -886,10 +886,21 @@ function Dashboard({version, year}) {
             {/* Right: Edge stats + Setup + PanelC */}
             <div ref={rightColRef} style={{flex:100-midFlex,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:140}}>
               {(()=>{
+                const totals = data?.account_totals || {};
+                const totalUsd = (totals.USD||0) + (totals.HKD||0) / 7.8;
+                let openRisk = null;
+                for (const p of (data?.open_positions||[])) {
+                  if (p.stop_loss == null) continue;
+                  let r = Math.abs(p.avg_entry - p.stop_loss) * p.quantity;
+                  if (p.currency === 'HKD') r /= 7.8;
+                  openRisk = (openRisk||0) + r;
+                }
+                const openRiskPct = openRisk!=null && totalUsd ? Math.round(openRisk/totalUsd*1000)/10 : null;
                 const cells = [
                   {label:'Expectancy',    val: metrics.expectancy_r!=null ? fmt(metrics.expectancy_r,2)+'R' : '—', color: metrics.expectancy_r>0?GREEN:metrics.expectancy_r<0?RED:'#c8d0e0'},
                   {label:'R / R',         val: metrics.rr_ratio!=null ? fmt(metrics.rr_ratio,2)+' : 1' : '—',       color: metrics.rr_ratio>=1?GREEN:metrics.rr_ratio!=null?RED:'#c8d0e0'},
                   {label:'Profit Factor', val: fmt(metrics.profit_factor,2),                                        color: metrics.profit_factor>=1?GREEN:RED},
+                  {label:'Open Risk',     val: openRisk!=null ? `$${fmt(openRisk,0)}${openRiskPct!=null?` (${openRiskPct}%)`:''}` : '—', color: openRisk!=null?RED:'#5a6478'},
                 ];
                 return (
                   <div style={{display:'flex',flexShrink:0,borderBottom:'1px solid rgba(255,255,255,0.06)',background:'rgba(255,255,255,0.015)'}}>
