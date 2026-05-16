@@ -2014,26 +2014,47 @@ function ReviewItem({item, onRefresh}) {
     }
   };
 
+  const isEntry = ['BUY','SHORT'].includes(item.action);
+  const slInputSt = {width:100,padding:'4px 8px',background:'#0a0d12',
+    border:'1px solid rgba(255,255,255,0.12)',borderRadius:4,
+    color:'#c8d0e0',fontSize:12,fontFamily:'Space Mono',outline:'none'};
+
   return (
     <>
     <div style={{marginBottom:6,border:'1px solid rgba(255,255,255,0.06)',borderRadius:6,overflow:'hidden'}}>
-      <button onClick={()=>setOpen(!open)} style={{
-        width:'100%',display:'flex',justifyContent:'space-between',alignItems:'center',
-        padding:'10px 14px',background:'#0f1318',border:'none',color:'#c8d0e0',textAlign:'left',
-      }}>
+      {/* Collapsed bar */}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+        padding:'8px 14px',background:'#0f1318',cursor:'pointer',userSelect:'none'}}
+        onClick={()=>setOpen(!open)}>
         <span style={{display:'flex',alignItems:'center',gap:8}}>
-          <span style={{fontSize:10,fontFamily:'Space Mono',fontWeight:700,color:['BUY','SHORT'].includes(item.action)?GREEN:RED,textTransform:'uppercase',letterSpacing:'.06em'}}>{item.action}</span>
+          <span style={{fontSize:10,fontFamily:'Space Mono',fontWeight:700,color:isEntry?GREEN:RED,textTransform:'uppercase',letterSpacing:'.06em'}}>{item.action}</span>
           <span style={S.ticker}>{item.symbol}</span>
           <span style={{color:'#5a6478',fontFamily:'Space Mono'}}>×{item.quantity}</span>
           <span style={{color:'#5a6478',fontSize:10,letterSpacing:'.06em'}}>{item.broker}</span>
         </span>
-        <span style={{color:item.confidence>=0.9?GREEN:YELLOW,fontSize:11,fontFamily:'Space Mono'}}>
-          {Math.round(item.confidence*100)}%
+        <span style={{display:'flex',alignItems:'center',gap:8}} onClick={e=>e.stopPropagation()}>
+          {isEntry && (
+            <input
+              type="number" step="any" placeholder="stop loss"
+              value={stopLoss}
+              onChange={e=>setStopLoss(e.target.value)}
+              onKeyDown={e=>{ if(e.key==='Enter') act('approve'); }}
+              style={slInputSt}
+            />
+          )}
+          <button style={S.btn(true)} onClick={()=>act('approve')} disabled={busy}>
+            {busy?'…':'Approve'}
+          </button>
+          <button style={S.btn()} onClick={()=>act('reject')} disabled={busy}>Reject</button>
+          <span style={{color:item.confidence>=0.9?GREEN:YELLOW,fontSize:11,fontFamily:'Space Mono',marginLeft:4}}>
+            {Math.round(item.confidence*100)}%
+          </span>
+          {err && <span style={{fontSize:11,color:RED,fontFamily:'Space Mono'}}>{err}</span>}
         </span>
-      </button>
+      </div>
       {open && (
         <div style={{padding:'14px',background:'#0f1318',borderTop:'1px solid rgba(255,255,255,0.06)'}}>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
             <div>
               <div style={S.hdr}>Normalized</div>
               <pre style={{fontSize:10,color:'#5a6478',whiteSpace:'pre-wrap',wordBreak:'break-all'}}>{JSON.stringify(item.normalized,null,2)}</pre>
@@ -2042,24 +2063,6 @@ function ReviewItem({item, onRefresh}) {
               <div style={S.hdr}>Raw parsed</div>
               <pre style={{fontSize:10,color:'#5a6478',whiteSpace:'pre-wrap',wordBreak:'break-all'}}>{JSON.stringify(item.raw,null,2)}</pre>
             </div>
-          </div>
-          <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:10}}>
-            <span style={{fontSize:11,color:'#5a6478',fontFamily:'Space Grotesk'}}>Stop Loss</span>
-            <input
-              type="number" step="any" placeholder="e.g. 148.50"
-              value={stopLoss}
-              onChange={e=>setStopLoss(e.target.value)}
-              style={{width:110,padding:'4px 8px',background:'#0a0d12',border:'1px solid rgba(255,255,255,0.12)',
-                borderRadius:4,color:'#c8d0e0',fontSize:12,fontFamily:'Space Mono',outline:'none'}}
-            />
-            {stopLoss && <span style={{fontSize:11,color:'#5a6478',fontFamily:'Space Mono'}}>
-              Risk/share: {item.normalized?.price ? Math.abs(item.normalized.price - parseFloat(stopLoss)).toFixed(4) : '—'}
-            </span>}
-          </div>
-          <div style={{display:'flex',gap:8,alignItems:'center'}}>
-            <button style={S.btn(true)} onClick={()=>act('approve')} disabled={busy}>{busy?'Working…':'Approve'}</button>
-            <button style={S.btn()} onClick={()=>act('reject')} disabled={busy}>Reject</button>
-            {err && <span style={{fontSize:11,color:RED,fontFamily:'Space Mono'}}>{err}</span>}
           </div>
         </div>
       )}
