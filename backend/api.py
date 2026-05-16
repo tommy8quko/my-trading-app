@@ -91,11 +91,18 @@ def _get_portfolio():
     if _portfolio_cache is not None and now - _portfolio_cache_ts < _PORTFOLIO_TTL:
         return _portfolio_cache
     with _portfolio_lock:
-        # Re-check inside the lock in case another thread just built it
         if _portfolio_cache is not None and _time.time() - _portfolio_cache_ts < _PORTFOLIO_TTL:
             return _portfolio_cache
-        _portfolio_cache = build_portfolio()
-        _portfolio_cache_ts = _time.time()
+        last_exc = None
+        for attempt in range(3):
+            try:
+                _portfolio_cache = build_portfolio()
+                _portfolio_cache_ts = _time.time()
+                return _portfolio_cache
+            except Exception as e:
+                last_exc = e
+                _time.sleep(0.5 * (attempt + 1))
+        raise HTTPException(status_code=503, detail=f"Portfolio build failed: {last_exc}")
     return _portfolio_cache
 
 def _invalidate_portfolio():
