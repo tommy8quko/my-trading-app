@@ -1069,7 +1069,6 @@ function PositionRow({p, idx=0, onRefresh}) {
         </td>
         <td style={{textAlign:'right',color:RED}}>
           {p.stop_loss ? fmt(p.stop_loss,4) : '—'}
-          {p.stop_loss && !p.stop_is_initial && <span style={{marginLeft:4,fontSize:8,fontFamily:'Space Grotesk',fontWeight:700,color:'#f6ad55',background:'rgba(246,173,85,0.12)',borderRadius:3,padding:'1px 3px',verticalAlign:'middle'}}>M</span>}
         </td>
         <td style={{textAlign:'right',fontWeight:700,color:p.unrealized_pnl!=null?pnlColor(p.unrealized_pnl):'#5a6478'}}>
           {p.unrealized_pnl!=null ? (p.unrealized_pnl>=0?'+':'')+fmt(p.unrealized_pnl,2) : '—'}
