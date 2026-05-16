@@ -1084,7 +1084,10 @@ function PositionRow({p, idx=0, onRefresh}) {
         {(p.lots||[]).map((lot, lotIdx)=>{
           const lotIds  = (p.lots||[]).map(l=>l.order_id);
           const lotStop = curStops[lot.order_id] ?? (lot.stop_loss != null ? String(lot.stop_loss) : '');
-          const isInit  = stopIsInit[lot.order_id] !== false;
+          // Default toggle: Moved if user hasn't touched it AND the order already has an initial stop recorded
+          const isInit  = lot.order_id in stopIsInit
+            ? stopIsInit[lot.order_id] !== false
+            : (lot.stop_is_initial && !lot.has_initial_stop);
           const onStopKey = e => {
             if (e.key === 'Enter') { e.preventDefault(); saveCurrentStop(lot.order_id); }
             if (e.key === 'Tab') {

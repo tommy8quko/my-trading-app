@@ -204,13 +204,14 @@ def get_portfolio(year: int = 0):
             lot_current_stop = sr["current_stop"] if sr else l.stop_loss_at_entry
             lot_stop_is_initial = sr["is_initial"] if sr else True
             lots_out.append({
-                "order_id":      l.order_id,
-                "date":          str(l.order_date),
-                "action":        l.action,
-                "quantity":      l.quantity,
-                "entry_price":   l.entry_price,
-                "stop_loss":     lot_current_stop,
+                "order_id":        l.order_id,
+                "date":            str(l.order_date),
+                "action":          l.action,
+                "quantity":        l.quantity,
+                "entry_price":     l.entry_price,
+                "stop_loss":       lot_current_stop,
                 "stop_is_initial": lot_stop_is_initial,
+                "has_initial_stop": l.stop_loss_at_entry is not None,
             })
 
         # Position-level stop: first lot with a current stop set, else initial_stop_loss
