@@ -178,6 +178,12 @@ def get_portfolio(year: int = 0):
     open_keys = {(p.symbol, str(p.earliest_entry_date)) for p in open_pos if p.earliest_entry_date}
     review_map = {k: v for k, v in all_review_map.items() if k in open_keys}
 
+    # Fetch current stops for open positions
+    open_symbols = [p.symbol for p in open_pos]
+    raw_stops = get_supabase().table("position_stops") \
+        .select("symbol,current_stop,is_initial").in_("symbol", open_symbols).execute().data or [] if open_symbols else []
+    stops_map = {r["symbol"]: r for r in raw_stops}
+
     pos_rows = []
     for p in open_pos:
         price = prices.get(p.symbol)
@@ -188,6 +194,9 @@ def get_portfolio(year: int = 0):
         notional_usd = round(notional / _FX_HKD_USD if p.currency == "HKD" else notional, 2)
         notional_pct = round(notional_usd / total_usd * 100, 2) if total_usd else None
         rev = review_map.get((p.symbol, str(p.earliest_entry_date)), {})
+        stop_row = stops_map.get(p.symbol)
+        current_stop = stop_row["current_stop"] if stop_row else p.initial_stop_loss
+        stop_is_initial = stop_row["is_initial"] if stop_row else True
         pos_rows.append({
             "symbol":         p.symbol,
             "exchange":       p.exchange,
@@ -198,7 +207,8 @@ def get_portfolio(year: int = 0):
             "notional":       notional,
             "notional_usd":   notional_usd,
             "notional_pct":   notional_pct,
-            "stop_loss":      p.initial_stop_loss,
+            "stop_loss":      current_stop,
+            "stop_is_initial": stop_is_initial,
             "setup_tag":      rev.get("setup_tag"),
             "market_condition": rev.get("market_condition"),
             "entry_date":     str(p.earliest_entry_date) if p.earliest_entry_date else None,
@@ -473,6 +483,24 @@ class OrderInsert(BaseModel):
 
 class StopLossUpdate(BaseModel):
     stop_loss: float | None = None
+
+class CurrentStopUpdate(BaseModel):
+    current_stop: float | None = None
+    is_initial: bool = True
+
+@app.patch("/api/positions/{symbol}/current_stop")
+def update_position_current_stop(symbol: str, body: CurrentStopUpdate):
+    db = get_supabase()
+    if body.current_stop is None or body.current_stop <= 0:
+        db.table("position_stops").delete().eq("symbol", symbol).execute()
+    else:
+        db.table("position_stops").upsert({
+            "symbol": symbol,
+            "current_stop": body.current_stop,
+            "is_initial": body.is_initial,
+        }, on_conflict="symbol").execute()
+    _invalidate_portfolio()
+    return {"ok": True}
 
 @app.patch("/api/orders/{order_id}/stop_loss")
 def update_stop_loss(order_id: str, body: StopLossUpdate):

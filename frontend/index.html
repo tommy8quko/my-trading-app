@@ -58,9 +58,16 @@ window.addEventListener('unhandledrejection', function(e) {
   b.innerHTML = '<div style="color:#CE314B;font-size:14px;margin-bottom:8px">Unhandled Promise Error</div>'
     + '<div style="color:#c8d0e0;font-size:12px;max-width:600px;word-break:break-all;text-align:center">' + String(e.reason) + '</div>';
 });
+let _isFullscreen = false;
 document.addEventListener('keydown', function(e) {
   if (e.key === 'F11') {
     e.preventDefault();
+    if (window.pywebview && window.pywebview.api) {
+      _isFullscreen = !_isFullscreen;
+      window.pywebview.api.toggle_fullscreen();
+    }
+  } else if (e.key === 'Escape' && _isFullscreen) {
+    _isFullscreen = false;
     if (window.pywebview && window.pywebview.api) {
       window.pywebview.api.toggle_fullscreen();
     }
@@ -943,14 +950,18 @@ function Dashboard({version, year}) {
 
 // ── Position row with expandable lots + inline stop-loss edit + trade review ───
 function PositionRow({p, idx=0, onRefresh}) {
-  const [open,       setOpen]       = React.useState(false);
-  const [slVals,     setSlVals]     = React.useState({});
-  const [saving,     setSaving]     = React.useState({});
-  const [errs,       setErrs]       = React.useState({});
-  const [review,     setReview]     = React.useState(null);
-  const [form,       setForm]       = React.useState({});
-  const [savingRev,  setSavingRev]  = React.useState(false);
-  const [saveMsg,    setSaveMsg]    = React.useState('');
+  const [open,         setOpen]         = React.useState(false);
+  const [slVals,       setSlVals]       = React.useState({});
+  const [saving,       setSaving]       = React.useState({});
+  const [errs,         setErrs]         = React.useState({});
+  const [review,       setReview]       = React.useState(null);
+  const [form,         setForm]         = React.useState({});
+  const [savingRev,    setSavingRev]    = React.useState(false);
+  const [saveMsg,      setSaveMsg]      = React.useState('');
+  const [curStop,      setCurStop]      = React.useState(p.stop_loss != null ? String(p.stop_loss) : '');
+  const [stopIsInit,   setStopIsInit]   = React.useState(p.stop_is_initial !== false);
+  const [savingStop,   setSavingStop]   = React.useState(false);
+  const [stopErr,      setStopErr]      = React.useState('');
 
   const entryDate = p.entry_date || (p.lots?.[0]?.date ?? '');
 
@@ -972,6 +983,19 @@ function PositionRow({p, idx=0, onRefresh}) {
       await onRefresh();
     } catch(e) { setErrs(er=>({...er,[lotOrderId]:e.message||String(e)})); }
     setSaving(s=>({...s,[lotOrderId]:false}));
+  };
+
+  const saveCurrentStop = async () => {
+    setSavingStop(true); setStopErr('');
+    try {
+      const sl = parseFloat(curStop);
+      await api(`/positions/${encodeURIComponent(p.symbol)}/current_stop`, {
+        method:'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({current_stop: sl > 0 ? sl : null, is_initial: stopIsInit}),
+      });
+      await onRefresh();
+    } catch(e) { setStopErr(e.message || String(e)); }
+    setSavingStop(false);
   };
 
   const [deleting, setDeleting] = React.useState(false);
@@ -1028,7 +1052,10 @@ function PositionRow({p, idx=0, onRefresh}) {
           {fmt(p.notional,0)}
           {p.notional_pct!=null && <span style={{color:'#5a6478',fontSize:10,marginLeft:4}}>({fmt(p.notional_pct,1)}%)</span>}
         </td>
-        <td style={{textAlign:'right',color:RED}}>{p.stop_loss ? fmt(p.stop_loss,4) : '—'}</td>
+        <td style={{textAlign:'right',color:RED}}>
+          {p.stop_loss ? fmt(p.stop_loss,4) : '—'}
+          {p.stop_loss && !p.stop_is_initial && <span style={{marginLeft:4,fontSize:8,fontFamily:'Space Grotesk',fontWeight:700,color:'#f6ad55',background:'rgba(246,173,85,0.12)',borderRadius:3,padding:'1px 3px',verticalAlign:'middle'}}>M</span>}
+        </td>
         <td style={{textAlign:'right',fontWeight:700,color:p.unrealized_pnl!=null?pnlColor(p.unrealized_pnl):'#5a6478'}}>
           {p.unrealized_pnl!=null ? (p.unrealized_pnl>=0?'+':'')+fmt(p.unrealized_pnl,2) : '—'}
         </td>
@@ -1038,7 +1065,7 @@ function PositionRow({p, idx=0, onRefresh}) {
       </tr>
 
       {open && <>
-        {/* Lot rows with stop loss */}
+        {/* Lot rows (read-only) */}
         {(p.lots||[]).map(lot=>(
           <tr key={lot.order_id} style={{background:'rgba(255,255,255,0.02)'}}>
             <td style={{paddingLeft:20,color:'#5a6478',fontSize:10,fontFamily:'Space Mono'}}>{lot.date}</td>
@@ -1046,25 +1073,35 @@ function PositionRow({p, idx=0, onRefresh}) {
             <td/>
             <td style={{textAlign:'right',color:'#5a6478',fontSize:11,fontFamily:'Space Mono'}}>{fmt(lot.quantity)}</td>
             <td style={{textAlign:'right',color:'#5a6478',fontSize:11,fontFamily:'Space Mono'}}>{fmt(lot.entry_price,4)}</td>
-            <td style={{textAlign:'right'}}>
-              <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:4}}>
-                <input type="number" step="any"
-                  placeholder={lot.stop_loss ? fmt(lot.stop_loss,4) : 'set stop'}
-                  value={slVals[lot.order_id] ?? (lot.stop_loss||'')}
-                  onChange={e=>setSlVals(s=>({...s,[lot.order_id]:e.target.value}))}
-                  style={inputSt}
-                />
-                <button onClick={e=>{e.stopPropagation();saveSL(lot.order_id);}}
-                  disabled={saving[lot.order_id]}
-                  style={{...S.btn(true),padding:'3px 8px',fontSize:10}}>
-                  {saving[lot.order_id]?'…':'Save'}
-                </button>
-                {errs[lot.order_id] && <span style={{fontSize:10,color:RED}}>{errs[lot.order_id]}</span>}
-              </div>
-            </td>
-            <td colSpan={2}/>
+            <td colSpan={3}/>
           </tr>
         ))}
+
+        {/* Current stop editor */}
+        <tr style={{background:'rgba(255,255,255,0.02)'}}>
+          <td colSpan={9} style={{padding:'8px 20px',borderTop:'1px solid rgba(255,255,255,0.04)'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8}} onClick={e=>e.stopPropagation()}>
+              <span style={{fontSize:10,color:'#5a6478',fontFamily:'Space Grotesk',flexShrink:0}}>Current Stop</span>
+              <input type="number" step="any" placeholder="e.g. 144.00"
+                value={curStop} onChange={e=>setCurStop(e.target.value)}
+                style={{...inputSt,width:100}}/>
+              {/* Initial / Moved toggle */}
+              <div style={{display:'flex',borderRadius:4,overflow:'hidden',border:'1px solid rgba(255,255,255,0.1)',flexShrink:0}}>
+                <button onClick={()=>setStopIsInit(true)} style={{padding:'3px 8px',border:'none',cursor:'pointer',fontSize:10,fontFamily:'Space Mono',
+                  background:stopIsInit?'rgba(99,179,237,0.15)':'transparent',
+                  color:stopIsInit?ACCENT:'#5a6478'}}>Initial</button>
+                <button onClick={()=>setStopIsInit(false)} style={{padding:'3px 8px',border:'none',cursor:'pointer',fontSize:10,fontFamily:'Space Mono',
+                  background:!stopIsInit?'rgba(246,173,85,0.15)':'transparent',
+                  color:!stopIsInit?'#f6ad55':'#5a6478'}}>Moved</button>
+              </div>
+              <button onClick={saveCurrentStop} disabled={savingStop}
+                style={{...S.btn(true),padding:'3px 8px',fontSize:10,flexShrink:0}}>
+                {savingStop?'…':'Save'}
+              </button>
+              {stopErr && <span style={{fontSize:10,color:RED}}>{stopErr}</span>}
+            </div>
+          </td>
+        </tr>
 
         {/* Trade review form */}
         <tr style={{background:'rgba(255,255,255,0.01)'}}>
@@ -2331,14 +2368,27 @@ function CalcPanel({onClose}) {
   const [target, setTarget] = React.useState('');
   const [stop,   setStop]   = React.useState('');
   const [riskPct,setRiskPct]= React.useState('');
-  const [portfolio, setPortfolio] = React.useState(null);
+  const [portfolio,   setPortfolio]   = React.useState(null);
+  const [openRisk,    setOpenRisk]    = React.useState(null);
   const [pos, setPos] = React.useState({top:60, right:20, left:null});
   const dragRef = React.useRef(null);
 
   React.useEffect(()=>{
     api('/portfolio').then(d=>{
       const t = d.account_totals || {};
-      setPortfolio(round2((t.USD||0) + (t.HKD||0) / 7.8));
+      const totalUsd = (t.USD||0) + (t.HKD||0) / 7.8;
+      setPortfolio(round2(totalUsd));
+      // Sum open risk: |avg_entry - current_stop| × qty, converted to USD
+      const positions = d.open_positions || [];
+      let risk = 0;
+      for (const p of positions) {
+        if (p.stop_loss == null) continue;
+        const perShare = Math.abs(p.avg_entry - p.stop_loss);
+        let riskUsd = perShare * p.quantity;
+        if (p.currency === 'HKD') riskUsd /= 7.8;
+        risk += riskUsd;
+      }
+      setOpenRisk(positions.some(p=>p.stop_loss!=null) ? round2(risk) : null);
     }).catch(()=>{});
   }, []);
 
@@ -2513,6 +2563,28 @@ function CalcPanel({onClose}) {
               {rr!=null ? `${rr} : 1` : '—'}
             </span>
           </div>
+        </div>
+      )}
+
+      {/* Worst-case open risk */}
+      {openRisk!=null && P && (
+        <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid rgba(255,255,255,0.06)'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline'}}>
+            <span style={{fontSize:11,color:'#5a6478',fontFamily:'Space Grotesk'}}>All stops hit</span>
+            <span style={{fontFamily:'Space Mono',fontWeight:700,fontSize:13,color:RED}}>
+              ${fmt(openRisk,0)}
+              <span style={{fontSize:10,fontWeight:400,color:'#a0536a',marginLeft:6}}>({round2(openRisk/P*100)}%)</span>
+            </span>
+          </div>
+          {riskAmt!=null && (
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginTop:4}}>
+              <span style={{fontSize:11,color:'#5a6478',fontFamily:'Space Grotesk'}}>+ this trade</span>
+              <span style={{fontFamily:'Space Mono',fontWeight:700,fontSize:13,color:RED}}>
+                ${fmt(openRisk+riskAmt,0)}
+                <span style={{fontSize:10,fontWeight:400,color:'#a0536a',marginLeft:6}}>({round2((openRisk+riskAmt)/P*100)}%)</span>
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>
