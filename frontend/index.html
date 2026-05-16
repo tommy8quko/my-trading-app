@@ -2435,6 +2435,8 @@ function CalcPanel({onClose}) {
   if (!hasRisk && hasEntry && hasStop && hasQty  && P) mode = 'risk';
 
   const riskPerUnit = (hasEntry && hasStop) ? (dir==='LONG' ? E - S : S - E) : null;
+  // True when stop is on the wrong side of entry for the chosen direction
+  const stopWrongSide = riskPerUnit !== null && riskPerUnit <= 0;
 
   let solvedQty=null, solvedStop=null, solvedRisk=null;
   if (mode==='risk' && Q>0 && riskPerUnit!=null && riskPerUnit>0)
@@ -2451,12 +2453,15 @@ function CalcPanel({onClose}) {
   const displayRisk  = mode==='risk' ? solvedRisk  : (hasRisk ? R : null);
   const displayEntry = hasEntry ? E : null;
 
-  const riskAmt = (displayQty&&displayEntry&&displayStop!=null)
-    ? round2(Math.abs(displayEntry-displayStop)*displayQty) : null;
+  const stopDist = (displayEntry != null && displayStop != null) ? Math.abs(displayEntry - displayStop) : null;
+  // Only show risk when stop is on the correct side (riskPerUnit > 0, or stop is solved)
+  const riskAmt = (!stopWrongSide && displayQty && displayEntry && stopDist)
+    ? round2(stopDist * displayQty) : null;
   const notional = (displayQty&&displayEntry) ? round2(displayQty*displayEntry) : null;
   const notionalPct = (notional&&P) ? round2(notional/P*100) : null;
-  const rr = (displayEntry&&displayStop!=null&&T)
-    ? round2(Math.abs(T-displayEntry)/Math.abs(displayEntry-displayStop)) : null;
+  // Guard denominator > 0 to avoid Infinity
+  const rr = (displayEntry != null && stopDist > 0 && T)
+    ? round2(Math.abs(T - displayEntry) / stopDist) : null;
 
   const inSt = {
     width:'100%',padding:'5px 8px',background:'#0a0d12',
@@ -2524,9 +2529,15 @@ function CalcPanel({onClose}) {
                 ? <div style={{...solvedSt,padding:'5px 8px',borderRadius:4,fontSize:12,flex:1}}>{solvedStop!=null?solvedStop:'—'}</div>
                 : <input style={{...inSt,flex:1}} type="number" step="any" placeholder="e.g. 144.00"
                     value={stop} onChange={e=>setStop(e.target.value)}/>}
-              {stopPct!=null && (
+              {stopPct!=null && !stopWrongSide && (
                 <span style={{fontSize:10,fontFamily:'Space Mono',color:'#a0536a',whiteSpace:'nowrap',flexShrink:0}}>
                   {stopPct}%
+                </span>
+              )}
+              {stopWrongSide && (
+                <span style={{fontSize:10,fontFamily:'Space Mono',color:'#f6ad55',whiteSpace:'nowrap',flexShrink:0}}
+                  title={dir==='LONG'?'Stop must be below entry':'Stop must be above entry'}>
+                  ⚠ wrong side
                 </span>
               )}
             </div>
