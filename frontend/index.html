@@ -769,7 +769,7 @@ function Dashboard({version, year}) {
     {label:'Avg. Profit%',         val:metrics.avg_win_pct!=null?'+'+fmt(metrics.avg_win_pct,2)+'%':'—',          color:GREEN},
     {label:'Avg. Loss%',           val:metrics.avg_loss_pct!=null?fmt(metrics.avg_loss_pct,2)+'%':'—',            color:RED},
     {label:'Expectancy R',         val:metrics.expectancy_r!=null?fmt(metrics.expectancy_r,2)+'R':'—',            color:metrics.expectancy_r!=null?(metrics.expectancy_r>0?GREEN:RED):'#c8d0e0'},
-    {label:'R/R',                  val:metrics.rr_ratio!=null?fmt(metrics.rr_ratio,2)+' : 1':'—',                 color:metrics.rr_ratio!=null?(metrics.rr_ratio>=1?GREEN:RED):'#c8d0e0'},
+    {label:'R-Multiple',           val:metrics.rr_ratio!=null?fmt(metrics.rr_ratio,2)+' : 1':'—',                 color:metrics.rr_ratio!=null?(metrics.rr_ratio>=1?GREEN:RED):'#c8d0e0'},
     {label:'Win Rate',             val:pct(metrics.win_rate),                                                      color:metrics.win_rate>=0.4?GREEN:RED},
     {label:'Kelly Formula',        val:metrics.kelly!=null?fmt(metrics.kelly*100,1)+'%':'—',                      color:metrics.kelly!=null?(metrics.kelly>0?GREEN:RED):'#c8d0e0'},
     {label:'Profit Factor',        val:fmt(metrics.profit_factor,2),                                               color:metrics.profit_factor>=1?GREEN:RED},
@@ -900,7 +900,7 @@ function Dashboard({version, year}) {
                 const openRiskPct = openRisk!=null && totalUsd ? Math.round(openRisk/totalUsd*1000)/10 : null;
                 const cells = [
                   {label:'Expectancy',    val: metrics.expectancy_r!=null ? fmt(metrics.expectancy_r,2)+'R' : '—', color: metrics.expectancy_r>0?GREEN:metrics.expectancy_r<0?RED:'#c8d0e0'},
-                  {label:'R / R',         val: metrics.rr_ratio!=null ? fmt(metrics.rr_ratio,2)+' : 1' : '—',       color: metrics.rr_ratio>=1?GREEN:metrics.rr_ratio!=null?RED:'#c8d0e0'},
+                  {label:'R-Multiple',    val: metrics.rr_ratio!=null ? fmt(metrics.rr_ratio,2)+' : 1' : '—',       color: metrics.rr_ratio>=1?GREEN:metrics.rr_ratio!=null?RED:'#c8d0e0'},
                   {label:'Profit Factor', val: fmt(metrics.profit_factor,2),                                        color: metrics.profit_factor>=1?GREEN:RED},
                   {label:'Open Risk',     val: openRisk!=null ? `$${fmt(openRisk,0)}${openRiskPct!=null?` (${openRiskPct}%)`:''}` : '—', color: openRisk!=null?RED:'#5a6478'},
                 ];
