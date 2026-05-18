@@ -1935,14 +1935,30 @@ function DiagnosticsPanel() {
 }
 
 function ReviewQueue({pending, onRefresh}) {
-  const [approving, setApproving] = React.useState(false);
-  const [batchErr, setBatchErr] = React.useState('');
+  const [approving,        setApproving]        = React.useState(false);
+  const [batchErr,         setBatchErr]         = React.useState('');
+  const [batchClosedTrades,setBatchClosedTrades] = React.useState(null);
 
   const approveAll = async () => {
     setApproving(true); setBatchErr('');
     try {
-      await Promise.all(pending.map(r=>api(`/review/${r.id}/approve`,{method:'POST'})));
-      await onRefresh();
+      const results = await Promise.all(pending.map(r=>api(`/review/${r.id}/approve`,{method:'POST'})));
+      const closed = results.flatMap((res,i) => {
+        if (!['SELL','COVER'].includes(pending[i].action)) return [];
+        return res.closed_trades?.length ? res.closed_trades : [{
+          symbol: pending[i].symbol,
+          direction: pending[i].action === 'SELL' ? 'LONG' : 'SHORT',
+          entry_date: null,
+          exit_date: pending[i].normalized?.order_date || null,
+          pnl: null,
+          currency: pending[i].normalized?.currency || '',
+        }];
+      });
+      if (closed.length > 0) {
+        setBatchClosedTrades(closed);
+      } else {
+        await onRefresh();
+      }
     } catch(e) { setBatchErr(e.message || String(e)); }
     setApproving(false);
   };
@@ -1965,6 +1981,7 @@ function ReviewQueue({pending, onRefresh}) {
 
   return (
     <>
+      {batchClosedTrades && <OutcomeModal trades={batchClosedTrades} onClose={async()=>{setBatchClosedTrades(null);await onRefresh();}}/>}
       <div style={{display:'flex',gap:10,alignItems:'center',marginBottom:16,flexWrap:'wrap'}}>
         <span style={{fontSize:12,color:'#5a6478'}}>{pending.length} order(s) awaiting review</span>
         <button style={S.btn(true)} onClick={approveAll} disabled={approving}>{approving?'Approving…':'Approve All'}</button>
