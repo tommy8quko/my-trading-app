@@ -2147,15 +2147,14 @@ function OutcomeModal({trades, onClose}) {
                   {t.pnl!=null?(isWin?'+':'')+fmt(t.pnl,2)+' '+t.currency:'P&L pending'}
                 </span>
               </div>
-              <textarea
-                placeholder="What happened? Why did you exit?"
+              <select
                 value={reasons[key]||''}
                 onChange={e=>setReason(key, e.target.value)}
-                rows={2}
                 style={{width:'100%',background:'#0a0d12',border:'1px solid rgba(255,255,255,0.1)',
-                  borderRadius:4,color:'#c8d0e0',fontSize:11,fontFamily:'Space Mono',
-                  padding:'6px 8px',resize:'vertical',outline:'none',boxSizing:'border-box'}}
-              />
+                  borderRadius:4,color:reasons[key]?'#c8d0e0':'#5a6478',fontSize:11,fontFamily:'Space Mono',
+                  padding:'6px 8px',outline:'none',boxSizing:'border-box',cursor:'pointer'}}>
+                {OUTCOME_REASONS.map(r=><option key={r} value={r}>{r||'— select —'}</option>)}
+              </select>
             </div>
           );
         })}
